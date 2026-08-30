@@ -14,8 +14,6 @@ node_modules/
 .npm-cache/
 dist/
 
-# C++ build artifacts
-agents/cpp/build/
 
 # Logs
 *.log

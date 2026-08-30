@@ -1135,7 +1135,6 @@ export default function RLUsersDashboard() {
 
         <footer className="rounded-lg border border-[#2A2A2A] bg-[#1A1A1A]/75 px-5 py-4 text-center font-mono text-xs text-zinc-500">
           Built with PyTorch &middot; FastAPI &middot; Redis &middot; Kafka
-          &middot; C++ (libtorch) &middot; pybind11
         </footer>
       </div>
     </main>

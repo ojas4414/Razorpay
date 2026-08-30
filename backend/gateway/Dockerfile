@@ -14,6 +14,7 @@ COPY visuals/ ./visuals/
 # Needed by the in-process simulation: the agent/funnel/social-graph code, the
 # persona split, the exported policy and the product vocabulary.
 COPY agents/ ./agents/
+COPY core/ ./core/
 COPY data/ ./data/
 COPY live/ ./live/
 COPY policy_rl.onnx vocab.json ./

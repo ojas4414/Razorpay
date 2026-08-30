@@ -8,7 +8,6 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-BC%20%2B%20PPO-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![C++](https://img.shields.io/badge/C%2B%2B17-pybind11%20ports%20(not%20wired%20in)-00599C?logo=cplusplus&logoColor=white)](https://isocpp.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-microservices-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Redis](https://img.shields.io/badge/Redis-pub%2Fsub-DC382D?logo=redis&logoColor=white)](https://redis.io/)
 [![Kafka](https://img.shields.io/badge/Apache%20Kafka-event%20stream-231F20?logo=apachekafka&logoColor=white)](https://kafka.apache.org/)
@@ -43,7 +42,6 @@ The simulation streams live: every agent action is published to Redis and Kafka 
    │                    simulate_live.py                          │
    │  50 agents · heap scheduler · BFS social propagation ·       │
    │  topological funnel gate · persona-driven budgets/quit rates │
-   │  (pure Python; C++ ports exist in agents/cpp/, unused)        │
    └───────┬──────────────────────────────────────────┬──────────┘
            │ publish per event                          │ publish per event
    ┌───────▼────────┐                           ┌───────▼────────┐
@@ -60,7 +58,7 @@ The simulation streams live: every agent action is published to Redis and Kafka 
 The simulation loop above (`live/engine.py`) runs two ways depending on topology: the FastAPI gateway starts it on a background thread by default (`live/runner.py`), so the dashboard is live with no setup step; `simulate_live.py` runs the identical loop as a standalone process, for when you want it decoupled from the gateway. Either one publishes to Redis/Kafka when they're reachable and falls back to an in-process queue when they're not.
 
 - **Training** — `agents/bc_trainer.py` imitation-learns from real user sequences; `agents/rl_trainer.py` fine-tunes with PPO, boosting product logits for agents that just received a social signal.
-- **Simulation core** — a min-heap event scheduler, an Erdős–Rényi social graph with BFS influence propagation (`1 / 2^depth` decay), and a topologically-sorted funnel gate. All three run in **pure Python**; `agents/cpp/` holds C++/pybind11 ports of the same algorithms written alongside them, but **nothing in the runtime imports or builds them** — they are not currently wired into the execution path and do not accelerate anything today.
+- **Simulation core** — a min-heap event scheduler, an Erdős–Rényi social graph with BFS influence propagation (`1 / 2^depth` decay), and a topologically-sorted funnel gate. All three run in pure Python: profiling puts them at **0.83% of simulation runtime**, against **64% in ONNX policy inference**, so there is nothing here for a native port to buy.
 - **Live infrastructure** — every agent action publishes to Redis (dashboard feed, throttled to ~2 updates/sec for readability) and Kafka (`agent_actions`, full-fidelity event log, retention-capped so a long-running dev session can't fill the disk). Kafka is currently write-only: no consumer exists yet, but the stream is there for future subscribers — e.g. an inventory tracker, an audit log, or another agent reacting to the first 50.
 - **Backend** — a FastAPI gateway fronting `product_service`, `cart_service`, `order_service`, and `session_service`, each with its own Redis-backed state.
 - **Validation** — session length, conversion rate, cart abandonment, and social influence concentration, each checked against real industry benchmarks with a PASS/FAIL verdict.
@@ -205,16 +203,11 @@ Seeding the simulation is the obvious fix and is listed under Known Gaps.
   policy vocabulary is 2,985, so only **224 items (7.5%)** have a price at all.
   Purchases in every run above were effectively unconstrained by budget.
 - **The simulation is unseeded**, so no run is reproducible.
-- **The C++ ports in `agents/cpp/` are not built or imported** by anything at
-  runtime, and `agent_inference_engine.cpp` does not currently compile.
 
 ## Repo layout
 
 ```
 agents/          persona/agent model, BFS social graph, funnel gate, scheduler, BC + PPO trainers
-                 cpp/: C++/pybind11 ports of the scheduler, social graph, funnel and a
-                 libtorch inference engine — written alongside the Python, not built or
-                 imported by anything at runtime (see Known Gaps)
                  policy_runtime.py: torch-free (ONNX) inference used by the live path
 backend/         FastAPI gateway + product/cart/order/session microservices
 comms/           Redis and Kafka client helpers (both optional — see live/runner.py)

@@ -28,6 +28,7 @@ import time
 import traceback
 
 from live.bus import LiveBus
+from agents.policy_runtime import describe_backend
 from live.engine import LiveSimulation
 
 LIVE_CHANNEL = os.environ.get("FF_LIVE_CHANNEL", "rl_users_live")
@@ -127,7 +128,7 @@ class LiveRunner:
 
         sink = _EventSink(LIVE_CHANNEL)
         self.status = "running"
-        self.detail = f"in-process simulation, {simulation.policy.backend} backend"
+        self.detail = f"in-process simulation, {describe_backend(simulation.policy)}"
         print(f"[live] {self.detail}, {EVENTS_PER_SECOND:g} events/s", flush=True)
 
         min_interval = 1.0 / EVENTS_PER_SECOND if EVENTS_PER_SECOND > 0 else 0.0

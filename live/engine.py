@@ -1,18 +1,20 @@
 """
 The continuous agent simulation, as an importable engine.
 
-This is the loop that used to live inside ``simulate_live.py``'s
-``if __name__ == "__main__":`` block. Nothing about the simulation changed —
-same funnel gate, same RL product choice, same social contagion, same persona
-mix — it is just reachable now from something other than a shell prompt, which
-is what lets the deployed gateway run it in-process (see live/runner.py).
+Agents move through the funnel in **sessions**: one visit, one terminal outcome
+-- converted, or abandoned with a reason. A session is the unit the recovery
+pipeline detects on, intervenes in and scores, and it is what makes the numbers
+countable: 50 agents produce 50 sessions per round, so a batch run produces
+thousands of observations rather than the 50 agent-lifetimes the validation path
+used to call "sessions".
 
-Two deliberate differences from the original script:
+Time is simulated seconds. The scheduler's timestamps are the only clock that
+enters a measurement; one tick is one second (core.session.SECONDS_PER_TICK).
+Wall-clock time appears in events for display and nothing else.
 
-* Inference goes through agents/policy_runtime, so the loop runs without torch.
-* Event delivery is a generator. The engine yields events and holds no opinion
-  about where they go; simulate_live.py writes them to a file and Redis, the
-  gateway pushes them onto a websocket.
+Event delivery is a generator. The engine yields events and holds no opinion
+about where they go; simulate_live.py writes them to a file and Redis, the
+gateway pushes them onto a websocket.
 """
 import datetime
 import json
@@ -27,6 +29,7 @@ from agents.funnel import (
     Funnel_graph as FUNNEL_GRAPH,
     build as build_prerequisites,
     allowed as is_action_allowed,
+    topo_sort,
 )
 from agents.policy_runtime import load_policy, sample_with_social
 from agents.scheduler import Scheduler
@@ -35,24 +38,36 @@ from agents.social_graph import (
     bsf as propagate_influence,
     signal_strenght as compute_signal_strength,
 )
+from core.cart import cart_total
+from core.session import Outcome, Reason, Session, reset_session_ids
 from data.persona_cluster import assign_agent_personas
 
 N_AGENTS = 50
-ACTIONS = ["browse", "product_detail", "cart", "checkout"]
+# The funnel's own topological order, rather than a hand-maintained copy of it.
+# funnel.py is the single source of truth for stage sequence; adding a stage
+# there now changes the simulation without a second edit here.
+ACTIONS = topo_sort(FUNNEL_GRAPH)
 WINDOW_SIZE = 3
 EPSILON = 0.25
 MAX_IN_FILE = 60          # rolling window of events kept for the dashboard
+# Completed sessions retained by default. The gateway runs this loop for as long
+# as the instance is up, so the list has to be bounded or it grows without limit.
+# A batch experiment passes keep_sessions=None to keep every session, because it
+# has to score all of them -- and it runs to a fixed size, so it cannot leak.
+MAX_KEPT_SESSIONS = 1000
 CONNECTION_PROB = 0.1
 INFLUENCE_MAX_DEPTH = 2
-PRICE_MIN, PRICE_MAX = 9.99, 199.99
 REFILL_THRESHOLD = 10.0
 VOCAB_PATH = "vocab.json"
+
+# Gap between one action and the next, in simulated seconds.
+ACTION_DELAY_MIN, ACTION_DELAY_MAX = 0.5, 3.0
 
 
 def load_vocab(path=VOCAB_PATH, window_size=WINDOW_SIZE):
     """Return {product_id: index}, rebuilding it from raw reviews if needed.
 
-    The rebuild path pulls in pandas and torch, so it is imported lazily — the
+    The rebuild path pulls in pandas and torch, so it is imported lazily -- the
     deployed image ships vocab.json and never touches it.
     """
     if os.path.exists(path):
@@ -85,7 +100,17 @@ def default_persona_mix(n_agents=N_AGENTS):
 class LiveSimulation:
     """Runs agents through the funnel forever, yielding one event at a time."""
 
-    def __init__(self, policy, item_to_idx, n_agents=N_AGENTS, max_events=MAX_IN_FILE):
+    def __init__(self, policy, item_to_idx, n_agents=N_AGENTS, max_events=MAX_IN_FILE,
+                 seed=None, keep_sessions=MAX_KEPT_SESSIONS):
+        # Seed before anything draws: the social graph, the persona mix and every
+        # later action all pull from the `random` module, including
+        # policy_runtime.sample_logits. One seed therefore fixes an entire run,
+        # which is what makes an experiment re-runnable and its arms comparable.
+        self.seed = seed
+        if seed is not None:
+            random.seed(seed)
+            reset_session_ids()
+
         self.policy = policy
         self.item_to_idx = item_to_idx
         # Mirrors rl_trainer.build_reverse_vocab, inlined so the engine does not
@@ -94,6 +119,9 @@ class LiveSimulation:
         self.product_ids = list(item_to_idx.keys())
         self.n_agents = n_agents
         self.max_events = max_events
+        # Live runs keep a rolling window; a batch experiment passes None and
+        # keeps every session, because it has to score all of them.
+        self.keep_sessions = keep_sessions
 
         self.graph = build_social_graph(n_agents, connection_prob=CONNECTION_PROB)
         self.prereqs = build_prerequisites(FUNNEL_GRAPH)
@@ -103,11 +131,17 @@ class LiveSimulation:
         ]
 
         self.events = []
+        self.sessions = []          # completed Session objects
         self.rounds = 0
         self.stats = {
             "total_events": 0,
             "total_purchases": 0,
             "total_spend": 0.0,
+            "sessions_started": 0,
+            "sessions_converted": 0,
+            "sessions_abandoned": 0,
+            "sessions_reached_cart": 0,
+            "cart_sessions_converted": 0,
             "started_at": datetime.datetime.now().isoformat(),
         }
 
@@ -117,7 +151,21 @@ class LiveSimulation:
         policy = load_policy()
         return cls(policy, load_vocab(vocab_path), n_agents=n_agents, **kwargs)
 
-    # ── payload ───────────────────────────────────────────────────────────────
+    # -- metrics --------------------------------------------------------------
+    def cart_abandonment_rate(self):
+        """Abandonment over sessions that built a cart -- the industry denominator.
+
+        The old metric divided by every session, browse-only visits included, so
+        it was 1 - conversion by construction and not comparable to the ~70%
+        figure it was being scored against. This one excludes visits that never
+        created a cart, which is what makes the comparison legitimate.
+        """
+        reached = self.stats["sessions_reached_cart"]
+        if not reached:
+            return None
+        return round(1.0 - self.stats["cart_sessions_converted"] / reached, 4)
+
+    # -- payload --------------------------------------------------------------
     def payload(self, status="running"):
         """The exact shape the dashboard's live feed consumes."""
         elapsed = (
@@ -134,17 +182,26 @@ class LiveSimulation:
                 "policy_backend": self.policy.backend,
                 "agents": self.n_agents,
                 "rounds": self.rounds,
+                "cart_abandonment_rate": self.cart_abandonment_rate(),
+                "seed": self.seed,
             },
         }
 
-    def _record(self, agent, action, product_id, price=None):
+    def _record(self, agent, session, action, product_id, sim_time, dwell, price=None):
         event = {
-            "time": datetime.datetime.now().strftime("%H:%M:%S"),
+            "time": datetime.datetime.now().strftime("%H:%M:%S"),   # display only
+            "sim_time": round(sim_time, 3),
+            "session_id": session.session_id,
             "agent_id": agent.agent_id,
             "persona": agent.persona,
             "action": action,
+            "stage": session.stage,
+            "dwell": round(dwell, 3),
+            "stage_revisits": session.revisits(session.stage),
+            "cart_size": len(session.cart),
+            "cart_value": session.cart_value,
             "product": product_id[-10:],     # last 10 chars of the ASIN, for display
-            "product_id": product_id,        # full id — what Kafka consumers expect
+            "product_id": product_id,        # full id -- what Kafka consumers expect
             "amount": round(price, 2) if price else None,
             "balance": round(agent.balance, 2),
         }
@@ -156,7 +213,7 @@ class LiveSimulation:
             self.stats["total_spend"] += price
         return event
 
-    # ── simulation ────────────────────────────────────────────────────────────
+    # -- simulation -----------------------------------------------------------
     def next_product(self, agent):
         history = list(agent.history)
         while len(history) < WINDOW_SIZE:
@@ -181,61 +238,110 @@ class LiveSimulation:
         for influenced_id, signal in compute_signal_strength(influenced, product_id).items():
             self.agents[influenced_id].social_signal.append(signal)
 
-    def _reset_scheduler(self):
+    @staticmethod
+    def _delay():
+        """Simulated seconds until this agent's next action."""
+        return random.uniform(ACTION_DELAY_MIN, ACTION_DELAY_MAX)
+
+    def _start_round(self):
+        """Open one session per agent and schedule its first browse."""
         scheduler = Scheduler()
-        for i in range(self.n_agents):
-            scheduler.push(timestamp=random.uniform(0, 1.0), agent_id=i, action="browse")
+        sessions = {}
         for agent in self.agents:
+            start = random.uniform(0, 1.0)
             agent.action_history = []
             agent.session_log = []
             agent.history.clear()
-        return scheduler
+            sessions[agent.agent_id] = Session(
+                agent_id=agent.agent_id, persona=agent.persona, started_at=start
+            )
+            self.stats["sessions_started"] += 1
+            scheduler.push(timestamp=start, agent_id=agent.agent_id, action="browse")
+        return scheduler, sessions
+
+    def _close(self, session):
+        """Record a terminated session against the run's totals."""
+        if session.outcome == Outcome.CONVERTED:
+            self.stats["sessions_converted"] += 1
+        else:
+            self.stats["sessions_abandoned"] += 1
+        if session.reached_cart():
+            self.stats["sessions_reached_cart"] += 1
+            if session.outcome == Outcome.CONVERTED:
+                self.stats["cart_sessions_converted"] += 1
+        self.sessions.append(session)
+        if self.keep_sessions is not None:
+            del self.sessions[:-self.keep_sessions]
 
     def iter_events(self):
-        """Yield every agent action forever. One round = one pass of the heap."""
+        """Yield every agent action forever. One round = one session per agent."""
         while True:
             self.rounds += 1
-            scheduler = self._reset_scheduler()
+            scheduler, sessions = self._start_round()
 
             while scheduler.heap:
                 result = scheduler.pop()
                 if result is None:
                     break
-                timestamp, agent_id, action = result
+                sim_time, agent_id, action = result
                 agent = self.agents[agent_id]
+                session = sessions[agent_id]
+                if not session.is_open:
+                    continue
 
-                # Funnel gate — an agent cannot check out before it has a cart.
+                # Funnel gate -- an agent cannot check out before it has a cart.
                 if not is_action_allowed(agent.action_history, action, self.prereqs):
-                    scheduler.push(timestamp + random.uniform(0.5, 3.0), agent_id, "browse")
+                    scheduler.push(sim_time + self._delay(), agent_id, "browse")
                     continue
 
                 product_id = self.next_product(agent)
 
+                # How long the agent sat in its current stage before acting. Read
+                # before the transition, because that is the hesitation the
+                # detector has to see.
+                dwell = session.dwell(sim_time)
+
                 price = None
                 if action == "checkout":
-                    price = round(random.uniform(PRICE_MIN, PRICE_MAX), 2)
-                    if not agent.can_afford(price):
-                        scheduler.push(timestamp + random.uniform(0.5, 3.0), agent_id, "browse")
+                    total = session.cart_value
+                    if not agent.can_afford(total):
+                        session.end(Outcome.ABANDONED, Reason.INSUFFICIENT_BALANCE, sim_time)
+                        self._close(session)
                         continue
-                    agent.complete_purchase(price)
+                    price = total
+                    agent.complete_purchase(total)
                     self.propagate_social(agent_id, product_id)
+
+                session.enter_stage(action, sim_time)
+                session.record_action(sim_time)
+                if action == "cart":
+                    session.add_to_cart(product_id, cart_total(session.cart + [product_id]))
 
                 agent.record_action(product_id)
                 agent.action_history.append(action)
                 agent.session_log.append(product_id)
 
-                yield self._record(agent, action, product_id, price)
-
-                if agent.should_quit():
-                    continue
+                yield self._record(agent, session, action, product_id, sim_time, dwell, price)
 
                 if action == "checkout":
+                    session.end(Outcome.CONVERTED, Reason.PURCHASED, sim_time, revenue=price)
+                    self._close(session)
                     if agent.balance < REFILL_THRESHOLD:
                         agent.refill_balance()
-                    scheduler.push(timestamp + random.uniform(0.5, 3.0), agent_id, "browse")
+                    continue
+
+                if agent.should_quit():
+                    session.end(Outcome.ABANDONED, Reason.QUIT, sim_time)
+                    self._close(session)
+                    continue
+
+                if session.at_cap():
+                    session.end(Outcome.ABANDONED, Reason.SESSION_CAP, sim_time)
+                    self._close(session)
+                    continue
+
+                if agent.should_advance_funnel():
+                    next_action = ACTIONS[ACTIONS.index(action) + 1]
                 else:
-                    if agent.should_advance_funnel():
-                        next_action = ACTIONS[ACTIONS.index(action) + 1]
-                    else:
-                        next_action = "browse"
-                    scheduler.push(timestamp + random.uniform(0.5, 3.0), agent_id, next_action)
+                    next_action = "browse"
+                scheduler.push(sim_time + self._delay(), agent_id, next_action)

@@ -9,7 +9,6 @@ class Agent:
         self.history = deque(maxlen=history_limit)
         self.history_limit = history_limit
 
-        self.cart = []
         self.social_signal = []
         self.session_log = []
         self.action_history = []
@@ -30,12 +29,6 @@ class Agent:
 
     def record_action(self, item_id: str):
         self.history.append(item_id)
-
-    def get_observation(self):
-        return {
-            "own_history": list(self.history),
-            "social_signal": list(self.social_signal)
-        }
 
     def should_advance_funnel(self) -> bool:
         return random.random() < self.advance_prob
