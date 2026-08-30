@@ -49,18 +49,30 @@ def plot_social_graph(social_graph: dict, agent_personas: list,
     print(f"  Saved {save_path}")
 
 
-def plot_purchase_heatmap(agents: list, top_n: int = 20,
+def plot_purchase_heatmap(sessions: list, top_n: int = 20,
                           save_path="visuals/purchase_heatmap.png"):
-    all_items = [item for agent in agents for item in agent.session_log if item != "checkout"]
+    """Shopper x product interaction counts, aggregated over sessions.
+
+    Reads the product trail off each Session rather than an agent's lifetime
+    log, so a shopper's row is the sum of their visits.
+    """
+    all_items = [item for session in sessions for item in session.products]
     if not all_items:
-        print("  No purchases — skipping heatmap")
+        print("  No interactions — skipping heatmap")
         return
 
     top_products = [item for item, _ in Counter(all_items).most_common(top_n)]
-    matrix = np.zeros((len(agents), len(top_products)))
-    for i, agent in enumerate(agents):
-        for j, product in enumerate(top_products):
-            matrix[i][j] = agent.session_log.count(product)
+    product_index = {product: j for j, product in enumerate(top_products)}
+    agent_ids = sorted({session.agent_id for session in sessions})
+    row_of = {agent_id: i for i, agent_id in enumerate(agent_ids)}
+
+    matrix = np.zeros((len(agent_ids), len(top_products)))
+    for session in sessions:
+        row = row_of[session.agent_id]
+        for product in session.products:
+            column = product_index.get(product)
+            if column is not None:
+                matrix[row][column] += 1
 
     fig, ax = plt.subplots(figsize=(14, 8))
     im = ax.imshow(matrix, aspect="auto", cmap="hot", interpolation="nearest")
@@ -69,8 +81,8 @@ def plot_purchase_heatmap(agents: list, top_n: int = 20,
     ax.set_xticks(range(len(top_products)))
     ax.set_xticklabels([p[:10] for p in top_products], rotation=45,
                        ha="right", fontsize=7)
-    ax.set_yticks(range(len(agents)))
-    ax.set_yticklabels([str(i) for i in range(len(agents))], fontsize=6)
+    ax.set_yticks(range(len(agent_ids)))
+    ax.set_yticklabels([str(i) for i in agent_ids], fontsize=6)
     ax.set_xlabel("Product")
     ax.set_ylabel("Shopper")
     ax.set_title(
@@ -84,11 +96,11 @@ def plot_purchase_heatmap(agents: list, top_n: int = 20,
     print(f"  Saved {save_path}")
 
 
-def plot_trending_products(agents: list, top_n: int = 10,
+def plot_trending_products(sessions: list, top_n: int = 10,
                            save_path="visuals/trending_products.png"):
-    all_items = [item for agent in agents for item in agent.session_log if item != "checkout"]
+    all_items = [item for session in sessions for item in session.products]
     if not all_items:
-        print("  No purchases — skipping trending products chart")
+        print("  No interactions — skipping trending products chart")
         return
 
     top_items = Counter(all_items).most_common(top_n)
@@ -119,7 +131,7 @@ def plot_trending_products(agents: list, top_n: int = 10,
 def plot_session_length_distribution(real_sessions: list, sim_sessions: list,
                                      save_path="visuals/session_lengths.png"):
     real_lengths = [len(s) for s in real_sessions]
-    sim_lengths  = [len(s) for s in sim_sessions]
+    sim_lengths  = [s.actions for s in sim_sessions]
 
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.hist(real_lengths, bins=20, alpha=0.6, color="blue",   label="Real sessions")
@@ -143,10 +155,9 @@ def plot_session_length_distribution(real_sessions: list, sim_sessions: list,
     print(f"  Saved {save_path}")
 
 
-def run_all_visualizations(social_graph, agents, real_sessions,
-                            sim_sessions, agent_personas):
+def run_all_visualizations(social_graph, sessions, real_sessions, agent_personas):
     os.makedirs("visuals", exist_ok=True)
     plot_social_graph(social_graph, agent_personas)
-    plot_purchase_heatmap(agents)
-    plot_trending_products(agents)
-    plot_session_length_distribution(real_sessions, sim_sessions)
+    plot_purchase_heatmap(sessions)
+    plot_trending_products(sessions)
+    plot_session_length_distribution(real_sessions, sessions)

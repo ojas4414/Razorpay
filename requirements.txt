@@ -17,13 +17,11 @@ matplotlib
 
 # Development only — training (train.py) and batch validation (simulate.py).
 # Not needed to serve the dashboard or run the live simulation.
-#   torch           train.py, agents/bc_trainer.py, agents/rl_trainer.py, simulate.py
-#   pandas          data/loader.py, data/graph_builder.py
+#   torch           train.py, agents/bc_trainer.py, agents/rl_trainer.py, scripts/
+#   pandas          data/loader.py, data/graph_builder.py, simulate.py
 #   scikit-learn    data/persona_cluster.py
-#   requests        simulate.py (calls the microservices over HTTP)
 #   pytest          tests/ (run: python -m pytest tests/)
 # torch
 # pandas
 # scikit-learn
-# requests
 # pytest

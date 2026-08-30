@@ -1,4 +1,5 @@
 {
+  "sessions_simulated": 4000,
   "session_length": {
     "real": {
       "mean": 8.16,
@@ -7,111 +8,131 @@
       "max": 39
     },
     "simulated": {
-      "mean": 4.74,
-      "std": 5.164532892721277,
+      "mean": 9.31425,
+      "std": 5.5519363232569585,
       "min": 1,
-      "max": 20
+      "max": 18
     },
     "tolerance": "|mean difference| < 4.0",
+    "note": "The real figure is items per user sequence in the review data, which spans a user's whole review history rather than one visit. It is the closest real quantity available and is compared on that basis, but it is not a like-for-like session length.",
     "verdict": "PASS"
   },
   "conversion_rate": {
     "real_benchmark": "2-5%",
     "benchmark_source": "industry standard e-commerce conversion rate",
-    "simulated": 0.1,
-    "verdict": "FAIL"
+    "denominator": "all sessions",
+    "simulated": 0.0307,
+    "verdict": "PASS"
   },
   "abandonment_rate": {
-    "real_benchmark": "70-85% (industry cart abandonment) -- NOT APPLICABLE, see note",
-    "simulated": 0.9,
-    "verdict": "NOT_COMPARABLE",
-    "note": "This metric is the fraction of sessions containing no 'checkout', which is exactly 1 - conversion_rate by construction -- the two always sum to 1.0. Industry cart abandonment (~70%) is measured over sessions that created a cart, a different denominator that excludes browse-only sessions. Scoring this number against the 70-85% range compares two different quantities, so it is reported but deliberately left unscored."
+    "real_benchmark": "70-85%",
+    "benchmark_source": "industry cart abandonment (Baymard Institute)",
+    "denominator": "sessions that created a cart",
+    "note": "Measured over cart-reaching sessions only. Browse-only visits are excluded, which is what the industry figure does and what makes this comparison legitimate.",
+    "simulated": 0.8131,
+    "verdict": "PASS"
   },
   "social_influence_coefficient": {
     "description": "fraction of interactions captured by top 5 products",
     "real_benchmark": "0.20-0.40",
     "benchmark_source": "power-law concentration, Amazon trend data",
-    "simulated": 0.0431,
+    "simulated": 0.009,
     "verdict": "FAIL"
   },
   "budget_sensitivity": {
-    "average_buyer": 0.14,
-    "power_buyer": 0.0,
-    "browser": 0.0
+    "conversion_by_persona": {
+      "browser": 0.0,
+      "power_buyer": 0.0862,
+      "average_buyer": 0.0193
+    },
+    "expected_ordering": "power_buyer >= average_buyer >= browser",
+    "verdict": "PASS"
   },
+  "abandonment_drivers": {
+    "cart_abandonment_sessions": 535,
+    "by_driver": {
+      "price": 0.4224,
+      "hesitation": 0.2206,
+      "churn": 0.1832,
+      "intent": 0.1738
+    },
+    "recoverable_share": 0.4224,
+    "note": "recoverable_share is the fraction of cart abandonment driven by price, which a discount can move. The remainder is driven by hesitation, churn or absent intent and cannot be."
+  },
+  "seed": 42,
   "trending_products": [
     {
-      "product": "B08HQ5PN9Q",
-      "count": 2
+      "product": "B0932BXNKC",
+      "count": 94
     },
     {
-      "product": "B004W0EQB8",
-      "count": 2
+      "product": "B08JCX3DL7",
+      "count": 68
     },
     {
-      "product": "B08KT7FCYY",
-      "count": 2
+      "product": "B07NPCT6L5",
+      "count": 60
     },
     {
-      "product": "B08GS1G9BH",
-      "count": 2
+      "product": "B08C72C56Z",
+      "count": 59
     },
     {
-      "product": "B08PTZL95G",
-      "count": 2
+      "product": "B07XVNJFNF",
+      "count": 55
     }
   ],
   "sim_session_lengths": [
+    1,
+    1,
     2,
-    18,
-    16,
-    7,
-    20,
-    18,
-    4,
+    1,
     2,
     2,
-    4,
+    2,
+    2,
+    2,
+    3,
     5,
+    5,
+    5,
+    6,
+    5,
+    7,
+    5,
+    5,
+    7,
+    5,
+    6,
+    7,
+    6,
+    8,
+    7,
+    8,
+    7,
+    8,
+    10,
+    12,
     11,
-    6,
-    7,
-    7,
-    4,
-    1,
-    8,
-    1,
-    8,
-    1,
-    1,
-    20,
-    3,
-    2,
-    6,
-    1,
-    4,
-    5,
-    2,
-    1,
-    1,
-    1,
-    1,
-    2,
-    1,
-    1,
-    3,
-    4,
-    1,
-    1,
-    1,
-    6,
-    2,
-    1,
-    6,
-    1,
-    1,
-    2,
-    4
+    11,
+    15,
+    14,
+    15,
+    15,
+    13,
+    13,
+    15,
+    16,
+    18,
+    18,
+    18,
+    18,
+    18,
+    18,
+    18,
+    18,
+    18,
+    18
   ],
   "real_session_lengths": [
     16,
