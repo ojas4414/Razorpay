@@ -1,10 +1,7 @@
-import hashlib
-import json
-import random
-from collections import Counter
-
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+from core.catalog import load_catalog
 
 app = FastAPI()
 
@@ -12,6 +9,8 @@ DATA_FILE = "data/raw/All_Beauty.jsonl"
 
 
 class Product(BaseModel):
+    """The wire contract. Catalog construction and pricing live in core/."""
+
     product_id: str
     name: str
     category: str
@@ -19,36 +18,7 @@ class Product(BaseModel):
     stock: int
 
 
-def _deterministic_price(asin: str) -> float:
-    # md5 gives a stable seed across Python runs (unlike hash())
-    seed = int(hashlib.md5(asin.encode()).hexdigest(), 16) % (2 ** 32)
-    return round(random.Random(seed).uniform(10, 500), 2)
-
-
-def _load_catalog(filepath: str, top_n: int = 500) -> list[Product]:
-    counter: Counter = Counter()
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            for line in f:
-                asin = json.loads(line).get("parent_asin")
-                if asin:
-                    counter[asin] += 1
-    except FileNotFoundError:
-        return []
-
-    return [
-        Product(
-            product_id=asin,
-            name=asin,
-            category="beauty",
-            price=_deterministic_price(asin),
-            stock=100,
-        )
-        for asin, _ in counter.most_common(top_n)
-    ]
-
-
-_catalog: list[Product] = _load_catalog(DATA_FILE)
+_catalog: list[Product] = [Product(**row) for row in load_catalog(DATA_FILE)]
 _index: dict[str, Product] = {p.product_id: p for p in _catalog}
 
 
