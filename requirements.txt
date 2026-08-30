@@ -21,7 +21,9 @@ matplotlib
 #   pandas          data/loader.py, data/graph_builder.py
 #   scikit-learn    data/persona_cluster.py
 #   requests        simulate.py (calls the microservices over HTTP)
+#   pytest          tests/ (run: python -m pytest tests/)
 # torch
 # pandas
 # scikit-learn
 # requests
+# pytest
