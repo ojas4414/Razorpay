@@ -39,6 +39,7 @@ from agents.social_graph import (
     signal_strenght as compute_signal_strength,
 )
 from core.cart import cart_total
+from core.friction import Driver, Friction
 from core.session import Outcome, Reason, Session, reset_session_ids
 from data.persona_cluster import assign_agent_personas
 
@@ -250,10 +251,12 @@ class LiveSimulation:
         for agent in self.agents:
             start = random.uniform(0, 1.0)
             agent.action_history = []
-            agent.session_log = []
             agent.history.clear()
             sessions[agent.agent_id] = Session(
-                agent_id=agent.agent_id, persona=agent.persona, started_at=start
+                agent_id=agent.agent_id,
+                persona=agent.persona,
+                started_at=start,
+                friction=Friction.draw(agent.persona),
             )
             self.stats["sessions_started"] += 1
             scheduler.push(timestamp=start, agent_id=agent.agent_id, action="browse")
@@ -305,6 +308,12 @@ class LiveSimulation:
                 if action == "checkout":
                     total = session.cart_value
                     if not agent.can_afford(total):
+                        # The most unambiguously price-driven exit there is: the
+                        # basket cost more than the wallet held. A discount
+                        # moves these by definition, so they count as
+                        # recoverable rather than going unattributed.
+                        session.quit_driver = Driver.PRICE
+                        session.recoverable = True
                         session.end(Outcome.ABANDONED, Reason.INSUFFICIENT_BALANCE, sim_time)
                         self._close(session)
                         continue
@@ -313,13 +322,12 @@ class LiveSimulation:
                     self.propagate_social(agent_id, product_id)
 
                 session.enter_stage(action, sim_time)
-                session.record_action(sim_time)
+                session.record_action(sim_time, product_id)
                 if action == "cart":
                     session.add_to_cart(product_id, cart_total(session.cart + [product_id]))
 
                 agent.record_action(product_id)
                 agent.action_history.append(action)
-                agent.session_log.append(product_id)
 
                 yield self._record(agent, session, action, product_id, sim_time, dwell, price)
 
@@ -330,12 +338,39 @@ class LiveSimulation:
                         agent.refill_balance()
                     continue
 
-                if agent.should_quit():
+                # Quitting is a hazard, not a coin flip: it rises with the
+                # basket outrunning the wallet, with hesitation, and with
+                # bouncing between stages. The hazard also records which of
+                # those dominated, which is what lets the analysis separate
+                # abandonment a discount could move from abandonment it could
+                # not. See core/friction.py.
+                quit_now, hazard = session.friction.should_quit(
+                    cart_value=session.cart_value,
+                    balance=agent.balance,
+                    dwell=session.dwell(sim_time),
+                    revisits=session.revisits(session.stage),
+                )
+                if quit_now:
+                    session.quit_driver = hazard.driver
+                    session.recoverable = hazard.recoverable
                     session.end(Outcome.ABANDONED, Reason.QUIT, sim_time)
                     self._close(session)
                     continue
 
                 if session.at_cap():
+                    # Hitting the cap is the simulation bounding a session, not
+                    # a shopper deciding anything -- but the session was under
+                    # real pressure when it got there, so attribute it the same
+                    # way rather than leaving a sixth of abandonment with no
+                    # cause recorded.
+                    capped = session.friction.hazard(
+                        cart_value=session.cart_value,
+                        balance=agent.balance,
+                        dwell=session.dwell(sim_time),
+                        revisits=session.revisits(session.stage),
+                    )
+                    session.quit_driver = capped.driver
+                    session.recoverable = capped.recoverable
                     session.end(Outcome.ABANDONED, Reason.SESSION_CAP, sim_time)
                     self._close(session)
                     continue

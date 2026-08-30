@@ -48,6 +48,31 @@ class TestVisitCounting:
     def test_unvisited_stage_has_no_revisits(self):
         assert make().revisits("checkout") == 0
 
+    def test_staying_in_a_stage_is_not_a_revisit(self):
+        """Three browses in a row is one visit, not three."""
+        s = make()
+        for t in (1.0, 2.0, 3.0):
+            s.enter_stage("browse", t)
+        assert s.revisits("browse") == 0
+        assert s.stage_visits["browse"] == 1
+
+
+class TestDwellAccumulates:
+    def test_dwell_keeps_running_while_the_stage_does_not_change(self):
+        """Without this a stall is indistinguishable from a single pause, and
+        the detector's primary signal does not exist."""
+        s = make()
+        for t in (1.0, 2.0, 3.0):
+            s.enter_stage("browse", t)
+        assert s.dwell(10.0) == 10.0
+
+    def test_dwell_resets_only_on_a_real_move(self):
+        s = make()
+        s.enter_stage("browse", 4.0)
+        assert s.dwell(6.0) == 6.0
+        s.enter_stage("product_detail", 6.0)
+        assert s.dwell(7.0) == 1.0
+
 
 class TestTiming:
     def test_dwell_measures_time_in_the_current_stage(self):
