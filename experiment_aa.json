@@ -1,0 +1,33 @@
+{
+  "test": {
+    "treat_rate": 0.0389,
+    "control_rate": 0.0443,
+    "treat_n": 1467,
+    "control_n": 1491,
+    "delta": -0.0054,
+    "ci_low": -0.0198,
+    "ci_high": 0.009,
+    "z": -0.737,
+    "significant": false,
+    "mde": 0.0212
+  },
+  "margin": {
+    "incremental_conversions": -7.94,
+    "gross_recovered": -1711.5,
+    "discount_cost": 0.0,
+    "net": -1711.5,
+    "margin_positive": false
+  },
+  "policy": {
+    "issued": 1467,
+    "landed": 1308,
+    "missed": 159,
+    "duplicates_refused": 0,
+    "ineligible": 0,
+    "discount_rate": 0.0,
+    "dispatch_latency": 0.5
+  },
+  "aa": true,
+  "discount": 0.0,
+  "latency": 0.5
+}

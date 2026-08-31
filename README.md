@@ -284,6 +284,63 @@ that approached 100% would mean the model had been built to be rescued.
   history rather than a single visit. It is the closest real quantity available,
   and the report says so in the metric's own `note` field.
 
+## What we measured
+
+`python -m sim.experiment --sessions 43000 --budget-aware`, thresholds calibrated
+on seed 7 and measured on seed 42. Both runs are seeded and reproduce exactly.
+
+| | treatment | control | delta |
+|---|---|---|---|
+| **A/B** — 15% discount, 0.5s dispatch | 6.07% | 3.25% | **+2.82%** |
+| **A/A** — identical machinery, nothing applied | 3.89% | 4.43% | −0.54% |
+
+```
+A/B  +2.82%  (95% CI +1.29% to +4.35%, z=+3.61, n=1433/1476)  SIGNIFICANT, MDE 1.84%
+A/A  -0.54%  (95% CI -1.98% to +0.90%, z=-0.74, n=1467/1491)  not significant, MDE 2.12%
+```
+
+**The A/A is the load-bearing number.** The same detector, the same arm
+assignment, the same scheduling — with nothing applied — reports no effect. That
+is the evidence the harness measures rather than manufactures, and without it
+the A/B would just be a number the machinery produced. It matters here
+specifically because treated sessions perturb a shared random stream, so
+"the arms are comparable" is a claim that has to be tested rather than assumed.
+
+### Net margin
+
+Gross recovered revenue is the wrong number, and reporting it alone would have
+called several earlier failures a success. Every treated session that converts
+is billed at a discount, including the shoppers who would have bought anyway.
+
+```
+incremental conversions      40.4
+gross recovered           8,936.47
+discount cost             2,808.56
+NET                       6,127.91    positive
+```
+
+At a 15% discount the programme clears its own cost. It does not always: on an
+earlier configuration the same arithmetic gave cost at 2.4x recovered revenue
+and a net of −1,374.62. Which side of that line a campaign lands on depends on
+the discount rate and on how much of the treated population could ever respond —
+which is why the detector's *recoverable precision* (roughly a third of
+treatments, flat across every operating point) is reported alongside its
+accuracy.
+
+### What this does and does not show
+
+The recovery rate is **2.9%** of carts that would otherwise have been abandoned.
+Published cart-recovery campaigns are usually quoted nearer 10%, so this model
+under-recovers by roughly a factor of three even after calibration. The effect is
+real and significant; the magnitude is not a prediction about Razorpay traffic.
+
+All order values are synthetic — product prices are an md5 of the ASIN — and the
+behavioural model is calibrated to published aggregate benchmarks rather than
+fitted to real transactions. **The method transfers; the magnitudes do not.**
+
+Every number above is recomputable from the append-only audit trail, and the
+experiment prints whether the log and the analysis agree. They do.
+
 ## What did not work, and why
 
 Four attempts to make a discount move the needle failed before one worked. They
