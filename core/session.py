@@ -19,6 +19,8 @@ measurement.
 import itertools
 from dataclasses import dataclass, field
 
+from core.cart import checkout_total as _checkout_total
+
 SECONDS_PER_TICK = 1.0
 
 # A session that neither converts nor quits must still terminate, or it would
@@ -39,6 +41,9 @@ class Reason:
     """Why a session ended. Recorded verbatim in the audit trail."""
 
     PURCHASED = "purchased"
+    # Abandoned at checkout once shipping and tax pushed the bill past what the
+    # shopper would pay. Price-driven and therefore recoverable.
+    FEE_SHOCK = "fee_shock"
     QUIT = "quit"
     SESSION_CAP = "session_cap"
     INSUFFICIENT_BALANCE = "insufficient_balance"
@@ -82,6 +87,13 @@ class Session:
     # of what, and therefore whether an intervention could ever have moved it.
     quit_driver: str | None = None
     recoverable: bool = False
+    # Ground truth captured when the flag was raised, for analysis only. Never
+    # shown to the detector: it is the shopper's private willingness to pay, and
+    # a detector that could read it would be an oracle. Kept so the headroom of
+    # perfect targeting can be measured -- the thing a real deployment can never
+    # compute, and the reason a simulator is worth having.
+    reservation_at_flag: float | None = None
+    cart_value_at_flag: float | None = None
     # The recovery.detector.Flag this session was raised on, if it was. At most
     # one per session: the intervention is bounded, so the first flag is the
     # only one that can act.
@@ -157,6 +169,15 @@ class Session:
         if not self.discount:
             return self.cart_value
         return round(self.cart_value * (1.0 - self.discount), 2)
+
+    def checkout_total(self) -> float:
+        """The bill at checkout: discounted subtotal plus shipping and tax.
+
+        Distinct from effective_cart_value, which is what the cart page shows.
+        The gap between the two is the whole point -- it is only visible once
+        the shopper reaches checkout.
+        """
+        return _checkout_total(self.effective_cart_value())
 
     def add_to_cart(self, product_id: str, value: float):
         self.cart.append(product_id)

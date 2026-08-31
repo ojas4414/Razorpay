@@ -16,6 +16,7 @@ Event delivery is a generator. The engine yields events and holds no opinion
 about where they go; simulate_live.py writes them to a file and Redis, the
 gateway pushes them onto a websocket.
 """
+import bisect
 import datetime
 import json
 import os
@@ -38,7 +39,10 @@ from agents.social_graph import (
     bsf as propagate_influence,
     signal_strenght as compute_signal_strength,
 )
+import numpy as np
+
 from core.cart import cart_total
+from core.pricing import price_of
 from core.friction import Driver, Friction
 from core.session import Outcome, Reason, Session, reset_session_ids
 from recovery.assign import TREATMENT, arm_for
@@ -66,6 +70,21 @@ VOCAB_PATH = "vocab.json"
 
 # Gap between one action and the next, in simulated seconds.
 ACTION_DELAY_MIN, ACTION_DELAY_MAX = 0.5, 3.0
+
+# How strongly a shopper avoids products that would push the basket past what
+# they will pay. On by default: with it off, the policy's price-blind choices
+# built baskets at 2x the reservation price, far past anything a discount could
+# bridge, and only 5.7% of flagged carts were close enough for a 15% offer to
+# matter. Budget-aware baskets land just under the line and the checkout fee
+# then carries them over, which is where a discount works.
+#
+# The underlying cause is that the policy has no notion of price: its state is
+# three product ids, its reward is sequence plausibility, and price is an md5 of
+# the ASIN, statistically independent of anything it can see. This biases its
+# logits against products the remaining headroom cannot absorb, which turned out
+# to be enough -- a price-aware retrain would only be memorising a lookup table
+# the engine already has.
+BUDGET_WEIGHT = 2.5
 
 
 def load_vocab(path=VOCAB_PATH, window_size=WINDOW_SIZE):
@@ -106,7 +125,8 @@ class LiveSimulation:
 
     def __init__(self, policy, item_to_idx, n_agents=N_AGENTS, max_events=MAX_IN_FILE,
                  seed=None, keep_sessions=MAX_KEPT_SESSIONS, detector=None,
-                 interventions=None, treatment_share=0.5, arm_salt=DEFAULT_ARM_SALT):
+                 interventions=None, treatment_share=0.5, arm_salt=DEFAULT_ARM_SALT,
+                 budget_aware=True):
         # Seed before anything draws: the social graph, the persona mix and every
         # later action all pull from the `random` module, including
         # policy_runtime.sample_logits. One seed therefore fixes an entire run,
@@ -136,6 +156,20 @@ class LiveSimulation:
         self.interventions = interventions
         self.treatment_share = treatment_share
         self.arm_salt = arm_salt
+        self.budget_aware = budget_aware
+        # Price of every product, indexed the same way the policy's logits are,
+        # so the bias is a single vector subtraction rather than a lookup loop.
+        self.price_vector = np.array(
+            [price_of(self.idx_to_item.get(i, "")) if i in self.idx_to_item else 0.0
+             for i in range(len(self.item_to_idx))],
+            dtype=np.float64,
+        )
+        # Products ordered by price, so "everything I can still afford" is a
+        # prefix of a list rather than a scan of the whole catalogue. Rebuilding
+        # that scan per exploration step made a run take minutes instead of
+        # seconds.
+        self._by_price = sorted(self.product_ids, key=price_of)
+        self._sorted_prices = [price_of(p) for p in self._by_price]
 
         self.graph = build_social_graph(n_agents, connection_prob=CONNECTION_PROB)
         self.prereqs = build_prerequisites(FUNNEL_GRAPH)
@@ -228,7 +262,12 @@ class LiveSimulation:
         return event
 
     # -- simulation -----------------------------------------------------------
-    def next_product(self, agent):
+    def headroom(self, agent, session):
+        """What this shopper can still add before the basket outruns them."""
+        reservation = session.friction.reservation_price(agent.balance)
+        return max(reservation - session.cart_value, 1.0)
+
+    def next_product(self, agent, session=None):
         history = list(agent.history)
         while len(history) < WINDOW_SIZE:
             history = [None] + history
@@ -236,15 +275,29 @@ class LiveSimulation:
             self.item_to_idx.get(item, 0) if item else 0
             for item in history[-WINDOW_SIZE:]
         ]
-        chosen = sample_with_social(
-            self.policy.logits(state_ids),
-            agent.social_signal,
-            self.item_to_idx,
-        )
+        logits = self.policy.logits(state_ids)
+        if self.budget_aware and session is not None:
+            # Penalise products in proportion to how much of the remaining
+            # headroom they would consume. A product well inside budget is
+            # barely touched; one several times over is pushed far down.
+            logits = logits - BUDGET_WEIGHT * (
+                self.price_vector / self.headroom(agent, session)
+            )
+
+        chosen = sample_with_social(logits, agent.social_signal, self.item_to_idx)
         product_id = self.idx_to_item.get(chosen, self.product_ids[0])
         agent.social_signal = agent.social_signal[-3:]
+
         if random.random() < EPSILON:
-            product_id = random.choice(self.product_ids)
+            # Exploration has to respect the budget too, or a quarter of every
+            # basket is chosen blind and the bias above is undone.
+            if self.budget_aware and session is not None:
+                room = self.headroom(agent, session)
+                cutoff = bisect.bisect_right(self._sorted_prices, room)
+                pool = self._by_price[:cutoff] or self._by_price[:1]
+                product_id = random.choice(pool)
+            else:
+                product_id = random.choice(self.product_ids)
         return product_id
 
     def propagate_social(self, agent_id, product_id):
@@ -320,7 +373,7 @@ class LiveSimulation:
                     scheduler.push(sim_time + self._delay(), agent_id, "browse")
                     continue
 
-                product_id = self.next_product(agent)
+                product_id = self.next_product(agent, session)
 
                 # How long the agent sat in its current stage before acting. Read
                 # before the transition, because that is the hesitation the
@@ -329,7 +382,10 @@ class LiveSimulation:
 
                 price = None
                 if action == "checkout":
-                    total = session.effective_cart_value()
+                    # The bill, now including shipping and tax. The shopper
+                    # committed to the subtotal on the cart page; this is the
+                    # first time they see the rest of it.
+                    total = session.checkout_total()
                     if not agent.can_afford(total):
                         # The most unambiguously price-driven exit there is: the
                         # basket cost more than the wallet held. A discount
@@ -340,6 +396,21 @@ class LiveSimulation:
                         session.end(Outcome.ABANDONED, Reason.INSUFFICIENT_BALANCE, sim_time)
                         self._close(session)
                         continue
+
+                    # The fee shock. Shipping and tax have just appeared, and
+                    # the bill may now sit past what this shopper will pay.
+                    # Judged against the same reservation curve as every other
+                    # price decision, so a discount works here by the ordinary
+                    # mechanism rather than a special case.
+                    if random.random() >= session.friction.advance_multiplier(
+                        total, agent.balance
+                    ):
+                        session.quit_driver = Driver.PRICE
+                        session.recoverable = True
+                        session.end(Outcome.ABANDONED, Reason.FEE_SHOCK, sim_time)
+                        self._close(session)
+                        continue
+
                     price = total
                     agent.complete_purchase(total)
                     self.propagate_social(agent_id, product_id)
@@ -359,6 +430,10 @@ class LiveSimulation:
                 if self.detector is not None and session.flag is None:
                     session.flag = self.detector.evaluate(session, sim_time)
                     if session.flag is not None:
+                        session.reservation_at_flag = (
+                            session.friction.reservation_price(agent.balance)
+                        )
+                        session.cart_value_at_flag = session.cart_value
                         # Randomised at flag time, so the arms differ only in
                         # whether they were treated. arm_for hashes rather than
                         # drawing, so assignment consumes no randomness and an

@@ -51,9 +51,10 @@ def population(sessions, triggers):
 
 def run(n_sessions=DEFAULT_SESSIONS, discount=0.15, latency=0.5, triggers=None,
         calib_seed=CALIBRATION_SEED, eval_seed=EVALUATION_SEED, aa=False,
-        audit_path="recovery_audit.db"):
+        audit_path="recovery_audit.db", budget_aware=False):
     print(f"Calibrating on seed {calib_seed} ({n_sessions:,} sessions)...")
-    calib_sim, calib_events = run_sessions(n_sessions, calib_seed, collect_events=True)
+    calib_sim, calib_events = run_sessions(n_sessions, calib_seed, collect_events=True,
+                                           budget_aware=budget_aware)
     thresholds = calibrate(calib_events, calib_sim.sessions)
     print(f"  {thresholds.describe()}")
 
@@ -66,8 +67,8 @@ def run(n_sessions=DEFAULT_SESSIONS, discount=0.15, latency=0.5, triggers=None,
 
     label = "A/A (nothing applied)" if aa else f"{discount:.0%} discount, {latency}s latency"
     print(f"Running {label} on seed {eval_seed} ({n_sessions:,} sessions)...")
-    sim, _ = run_sessions(n_sessions, eval_seed,
-                          detector=Detector(thresholds), interventions=policy)
+    sim, _ = run_sessions(n_sessions, eval_seed, detector=Detector(thresholds),
+                          interventions=policy, budget_aware=budget_aware)
 
     pop = population(sim.sessions, triggers)
     treated = [s for s in pop if s.arm == TREATMENT]
@@ -150,13 +151,16 @@ def main():
                         help="comma-separated flag triggers to treat, e.g. price_shock")
     parser.add_argument("--aa", action="store_true", help="run an A/A check")
     parser.add_argument("--out", default=None, help="write the result as JSON")
+    parser.add_argument("--budget-aware", action="store_true",
+                        help="shoppers pick products they can afford")
     parser.add_argument("--audit", default="recovery_audit.db",
                         help="SQLite path for the audit trail")
     args = parser.parse_args()
 
     triggers = frozenset(args.triggers.split(",")) if args.triggers else None
     result = run(args.sessions, args.discount, args.latency, triggers,
-                 aa=args.aa, audit_path=args.audit)
+                 aa=args.aa, audit_path=args.audit,
+                 budget_aware=args.budget_aware)
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as handle:

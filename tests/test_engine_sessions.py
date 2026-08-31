@@ -20,6 +20,8 @@ KNOWN_REASONS = {
     Reason.QUIT,
     Reason.SESSION_CAP,
     Reason.INSUFFICIENT_BALANCE,
+    # Shipping and tax pushed the bill past what the shopper would pay.
+    Reason.FEE_SHOCK,
 }
 
 
