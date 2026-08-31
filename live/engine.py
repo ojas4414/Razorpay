@@ -102,7 +102,7 @@ class LiveSimulation:
     """Runs agents through the funnel forever, yielding one event at a time."""
 
     def __init__(self, policy, item_to_idx, n_agents=N_AGENTS, max_events=MAX_IN_FILE,
-                 seed=None, keep_sessions=MAX_KEPT_SESSIONS):
+                 seed=None, keep_sessions=MAX_KEPT_SESSIONS, detector=None):
         # Seed before anything draws: the social graph, the persona mix and every
         # later action all pull from the `random` module, including
         # policy_runtime.sample_logits. One seed therefore fixes an entire run,
@@ -123,6 +123,10 @@ class LiveSimulation:
         # Live runs keep a rolling window; a batch experiment passes None and
         # keeps every session, because it has to score all of them.
         self.keep_sessions = keep_sessions
+        # Optional recovery.detector.Detector. When absent the engine behaves
+        # exactly as before, which is what makes an untreated control arm and a
+        # detector-only run the same simulation.
+        self.detector = detector
 
         self.graph = build_social_graph(n_agents, connection_prob=CONNECTION_PROB)
         self.prereqs = build_prerequisites(FUNNEL_GRAPH)
@@ -330,6 +334,11 @@ class LiveSimulation:
                 agent.action_history.append(action)
 
                 yield self._record(agent, session, action, product_id, sim_time, dwell, price)
+
+                # Judged on what the stream shows, before the quit draw resolves
+                # this action. At most one flag per session.
+                if self.detector is not None and session.flag is None:
+                    session.flag = self.detector.evaluate(session, sim_time)
 
                 if action == "checkout":
                     session.end(Outcome.CONVERTED, Reason.PURCHASED, sim_time, revenue=price)

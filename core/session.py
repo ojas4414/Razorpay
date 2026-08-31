@@ -82,6 +82,10 @@ class Session:
     # of what, and therefore whether an intervention could ever have moved it.
     quit_driver: str | None = None
     recoverable: bool = False
+    # The recovery.detector.Flag this session was raised on, if it was. At most
+    # one per session: the intervention is bounded, so the first flag is the
+    # only one that can act.
+    flag: object | None = None
 
     outcome: str | None = None
     reason: str | None = None
@@ -170,6 +174,7 @@ class Session:
             "cart_size": len(self.cart),
             "products": len(self.products),
             "cart_value": self.cart_value,
+            "flagged": self.flag is not None,
             "quit_driver": self.quit_driver,
             "recoverable": self.recoverable,
             "revenue": self.revenue,
