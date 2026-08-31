@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.session import Outcome
 from recovery.analysis import ProportionTest, net_margin, required_sample_size
+from recovery.audit import AuditLog
 from recovery.assign import CONTROL, TREATMENT
 from recovery.detector import Detector, calibrate
 from recovery.intervention import InterventionPolicy
@@ -49,7 +50,8 @@ def population(sessions, triggers):
 
 
 def run(n_sessions=DEFAULT_SESSIONS, discount=0.15, latency=0.5, triggers=None,
-        calib_seed=CALIBRATION_SEED, eval_seed=EVALUATION_SEED, aa=False):
+        calib_seed=CALIBRATION_SEED, eval_seed=EVALUATION_SEED, aa=False,
+        audit_path="recovery_audit.db"):
     print(f"Calibrating on seed {calib_seed} ({n_sessions:,} sessions)...")
     calib_sim, calib_events = run_sessions(n_sessions, calib_seed, collect_events=True)
     thresholds = calibrate(calib_events, calib_sim.sessions)
@@ -104,6 +106,30 @@ def run(n_sessions=DEFAULT_SESSIONS, discount=0.15, latency=0.5, triggers=None,
         print(f"  NET                      {summary['net']:>10,.2f}   "
               f"{'positive' if summary['margin_positive'] else 'NEGATIVE'}")
 
+    # Every decision is written to the append-only audit trail, and the
+    # headline numbers are then recomputed from it. If the log and the
+    # in-memory analysis disagree, one of them is wrong and it shows here
+    # rather than staying silent.
+    experiment_id = (f"{'aa' if aa else 'ab'}-n{n_sessions}-d{effective_discount}"
+                     f"-l{latency}-s{eval_seed}")
+    audit = AuditLog(audit_path)
+    try:
+        written = audit.record_many(pop, experiment_id, eval_seed)
+        from_log = audit.outcomes_by_arm(experiment_id)
+        print(f"\n  --- audit trail ({audit_path}) ---")
+        print(f"  rows written             {written:>8,}   experiment {experiment_id}")
+        for arm in sorted(from_log):
+            entry = from_log[arm]
+            rate = entry["converted"] / entry["n"] if entry["n"] else 0.0
+            print(f"    {arm:<10} n={entry['n']:>6,}  converted={entry['converted']:>5,}"
+                  f"  {rate:>7.2%}")
+        logged_treat = from_log.get(TREATMENT, {"n": 0, "converted": 0})
+        agrees = (logged_treat["n"] == test.treat_n
+                  and logged_treat["converted"] == test.treat_hits)
+        print(f"  reconciles with analysis {'yes' if agrees else 'NO -- INVESTIGATE'}")
+    finally:
+        audit.close()
+
     baseline = test.control_rate
     for target in (0.01, 0.02, 0.05):
         needed = required_sample_size(baseline, target)
@@ -124,10 +150,13 @@ def main():
                         help="comma-separated flag triggers to treat, e.g. price_shock")
     parser.add_argument("--aa", action="store_true", help="run an A/A check")
     parser.add_argument("--out", default=None, help="write the result as JSON")
+    parser.add_argument("--audit", default="recovery_audit.db",
+                        help="SQLite path for the audit trail")
     args = parser.parse_args()
 
     triggers = frozenset(args.triggers.split(",")) if args.triggers else None
-    result = run(args.sessions, args.discount, args.latency, triggers, aa=args.aa)
+    result = run(args.sessions, args.discount, args.latency, triggers,
+                 aa=args.aa, audit_path=args.audit)
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as handle:

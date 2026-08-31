@@ -36,3 +36,6 @@ Thumbs.db
 
 # Misc empty scaffolding
 .agents/
+
+# Generated audit trail
+recovery_audit.db
