@@ -25,6 +25,71 @@ RL-USERS simulates a shopping population, not a shopping cart. Each of the 50 ag
 
 The simulation streams live: every agent action is published to Redis and Kafka as it happens, a FastAPI gateway forwards it over a WebSocket, and the dashboard updates round by round instead of reading a static report file. The gateway starts the simulation itself on boot (`live/runner.py`) — there is no separate process to launch, on Render or locally.
 
+## The recovery pipeline
+
+The simulator above is the substrate. The thing built on it is a
+**detect → intervene → measure → audit** loop for checkout abandonment, and the
+point of building it inside a simulation is that a simulation has something
+production never does: **counterfactual ground truth.** Every flagged session
+that goes untreated plays out anyway, so we can see what it *would* have done,
+and every abandonment records which pressure actually caused it. A live system
+sees neither.
+
+```
+        events ──►  recovery/detector.py     stall+hesitation, or price shock
+                          │                  thresholds calibrated on a held-out seed
+                          ▼
+                    recovery/assign.py       50/50 at flag time, hashed not drawn
+                       │        │
+                 control│        │treatment
+                        │        ▼
+                        │   recovery/intervention.py   one bounded discount,
+                        │        │                     dispatched with latency
+                        │        ▼
+                        └──►  core/friction.py   discount lowers the bill, which
+                                  │              lowers the quit hazard. No path
+                                  ▼              sets an outcome directly.
+                    recovery/analysis.py     z-test, 95% CI, MDE, net margin
+                                  │
+                                  ▼
+                    recovery/audit.py ──► SQLite (source of truth)
+                                  └─────► Kafka `recovery_events` ──► recovery/stream.py
+```
+
+**Detector** (`recovery/detector.py`). Flags a cart-bearing session on either of
+two routes: a stall in a stage combined with hesitation, or a basket unusually
+large for that shopper's segment. Thresholds are derived from the 75th
+percentile of behaviour in *converting* sessions, calibrated on a different seed
+from the one measured — tuning a threshold on the sessions you then score it
+against is fitting to the test set.
+
+**Intervention** (`recovery/intervention.py`). One discount per session, enforced
+by an idempotency key rather than by a comment claiming it. Scheduled into the
+same event heap the agents use, so it arrives late and can miss entirely if the
+session has already ended.
+
+**Measurement** (`recovery/analysis.py`, `sim/experiment.py`). Arms are randomised
+at flag time, compared like-for-like, and reported with a confidence interval and
+a minimum detectable effect. `--aa` runs the identical machinery with nothing
+applied; it has to come back null.
+
+**Audit** (`recovery/audit.py`, `recovery/stream.py`). One append-only row per
+decision, keeping the features the detector actually saw so a decision can be
+explained months later. The experiment recomputes its headline numbers from the
+log and prints whether they reconcile.
+
+### Two properties that make the result trustworthy
+
+**Arm assignment consumes no randomness.** The whole simulation runs off one
+seeded stream, so drawing a number to pick an arm would shift every later draw
+and the control arm would stop being the run you would have got with no
+experiment at all. `recovery/assign.py` hashes the session id instead.
+
+**A discount can only reach an outcome through the bill.** It lowers the
+effective cart value, which lowers the quit hazard and the willingness to
+proceed. There is no branch anywhere that marks a session recovered, and a test
+asserts it.
+
 ## Architecture
 
 ```
@@ -218,6 +283,87 @@ that approached 100% would mean the model had been built to be rescued.
   items per user sequence in the review data, which spans a user's whole review
   history rather than a single visit. It is the closest real quantity available,
   and the report says so in the metric's own `note` field.
+
+## What did not work, and why
+
+Four attempts to make a discount move the needle failed before one worked. They
+are documented because the failures locate the problem more precisely than the
+fix does, and because each one looked reasonable beforehand.
+
+**1. Raise the price coefficient in the quit hazard.** No effect at any value.
+Conversion turned out to be gated on *reaching* checkout, so a lower quit hazard
+only bought a session more time to wander until it hit the action cap. Survival
+is not conversion.
+
+**2. Make price drag on funnel progression.** Also no effect. A smooth channel
+moves in proportion to the price change: 15% off a basket shifted conversion by
+about a quarter of a point. Only a threshold — a price above which a shopper
+will not buy — makes a discount matter, and then only for shoppers it carries
+across that line.
+
+**3. A reservation price with a soft band.** Correct mechanism, no population.
+Measurement showed baskets were landing at a median **2.04x** what the shopper
+would pay: far past anything a 15% offer could bridge. Only **5.7%** of flagged
+carts sat close enough to the line to be crossable.
+
+The cause was upstream of the friction model entirely. The policy chooses
+products with no notion of price — its state is three product ids, its reward is
+sequence plausibility, and price is an md5 of the ASIN, statistically
+independent of anything the model can see. Baskets were being assembled with no
+reference to a budget.
+
+**4. Budget-aware baskets.** Fixed the cart-to-reservation ratio (2.04x → 0.89x)
+and immediately traded one blocker for another: shoppers who only add what they
+can afford do not abandon over price. Conversion rose to 9.18% and cart
+abandonment fell to 45.3%, both far out of band, and no value of the bias weight
+recovered them.
+
+**5. What worked: a checkout fee shock.** The most-cited real reason carts are
+abandoned is extra costs at checkout. Shipping and tax are now revealed *after*
+the shopper has committed to a subtotal they were happy with, which is how it
+works in life — cart pages show subtotals, checkout shows the rest. An
+affordable basket becomes an unaffordable total, and that is exactly the band a
+discount can carry back across.
+
+A near miss worth recording separately. Targeting price-shock flags appeared to
+give **+6.17%** until the comparison was checked: it was pitting price-shock
+*treated* sessions against *all* control sessions, and price-shock sessions
+convert at 13–18% in control against 8% overall. The entire effect was selection
+bias. Like-for-like it was +0.89% (z=0.17).
+
+## Path to production
+
+**Where this would attach.** The detector consumes an event stream; Razorpay
+already emits one. `payment.failed` and `order.paid` webhooks, plus Magic
+Checkout's abandonment events, carry the stage transitions and basket values
+this model reads. The intervention would dispatch through the Offers API rather
+than by mutating a simulated cart. Nothing in the pipeline needs the simulator
+once it is calibrated — the simulator is how you choose thresholds before
+touching live traffic.
+
+**What the simulation is for.** Calibrating a detector against counterfactual
+ground truth, which production cannot provide. You cannot observe what a flagged
+session would have done if you always treat it, and you cannot observe why
+someone left. Here you can do both, which is the argument for calibrating in
+simulation and shipping the thresholds.
+
+**Honest limits.** Every number here comes from synthetic data with declared,
+synthetic order values. Product prices are an md5 of the ASIN. The behavioural
+model is calibrated to published aggregate benchmarks, not fitted to Razorpay
+traffic, so the *magnitudes* are illustrative and only the *method* transfers.
+The detector's latency is optimistic: the simulation observes a session only
+when it acts, so a stall is detected on the action that ends it rather than
+while it is happening.
+
+**Data governance.** Every detector feature is behavioural — dwell, revisits,
+basket size, segment. No product identifiers, no free text, nothing identifying
+a shopper reaches the audit record, and a test asserts the schema stays that
+way. That is a design property rather than a claim, and it is what would let
+this shape of record survive a DPDP review. Real deployment would additionally
+need: consent boundaries for behavioural profiling, RBI data-localisation for
+anything touching transaction data, a rate limit and a kill switch on the offer
+engine, and reason codes on every decision — the last of which the audit trail
+already carries.
 
 ## Repo layout
 
