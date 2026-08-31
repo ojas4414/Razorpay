@@ -1,5 +1,5 @@
 {
-  "sessions_simulated": 4000,
+  "sessions_simulated": 14000,
   "session_length": {
     "real": {
       "mean": 8.16,
@@ -8,8 +8,8 @@
       "max": 39
     },
     "simulated": {
-      "mean": 9.31425,
-      "std": 5.5519363232569585,
+      "mean": 9.445857142857143,
+      "std": 5.604774493451898,
       "min": 1,
       "max": 18
     },
@@ -21,7 +21,7 @@
     "real_benchmark": "2-5%",
     "benchmark_source": "industry standard e-commerce conversion rate",
     "denominator": "all sessions",
-    "simulated": 0.0307,
+    "simulated": 0.0379,
     "verdict": "PASS"
   },
   "abandonment_rate": {
@@ -29,110 +29,110 @@
     "benchmark_source": "industry cart abandonment (Baymard Institute)",
     "denominator": "sessions that created a cart",
     "note": "Measured over cart-reaching sessions only. Browse-only visits are excluded, which is what the industry figure does and what makes this comparison legitimate.",
-    "simulated": 0.8131,
+    "simulated": 0.7769,
     "verdict": "PASS"
   },
   "social_influence_coefficient": {
     "description": "fraction of interactions captured by top 5 products",
     "real_benchmark": "0.20-0.40",
     "benchmark_source": "power-law concentration, Amazon trend data",
-    "simulated": 0.009,
+    "simulated": 0.0081,
     "verdict": "FAIL"
   },
   "budget_sensitivity": {
     "conversion_by_persona": {
       "browser": 0.0,
-      "power_buyer": 0.0862,
-      "average_buyer": 0.0193
+      "average_buyer": 0.0239,
+      "power_buyer": 0.1057
     },
     "expected_ordering": "power_buyer >= average_buyer >= browser",
     "verdict": "PASS"
   },
   "abandonment_drivers": {
-    "cart_abandonment_sessions": 535,
+    "cart_abandonment_sessions": 1846,
     "by_driver": {
-      "price": 0.4224,
-      "hesitation": 0.2206,
-      "churn": 0.1832,
-      "intent": 0.1738
+      "price": 0.4047,
+      "hesitation": 0.2281,
+      "churn": 0.1934,
+      "intent": 0.1739
     },
-    "recoverable_share": 0.4224,
+    "recoverable_share": 0.4047,
     "note": "recoverable_share is the fraction of cart abandonment driven by price, which a discount can move. The remainder is driven by hesitation, churn or absent intent and cannot be."
   },
   "seed": 42,
   "trending_products": [
     {
       "product": "B0932BXNKC",
-      "count": 94
+      "count": 320
     },
     {
       "product": "B08JCX3DL7",
-      "count": 68
+      "count": 211
     },
     {
-      "product": "B07NPCT6L5",
-      "count": 60
+      "product": "B01I7OUB0Y",
+      "count": 189
     },
     {
-      "product": "B08C72C56Z",
-      "count": 59
+      "product": "B08KWN77LW",
+      "count": 186
     },
     {
-      "product": "B07XVNJFNF",
-      "count": 55
+      "product": "B085TFXLH1",
+      "count": 171
     }
   ],
   "sim_session_lengths": [
     1,
-    1,
     2,
-    1,
-    2,
-    2,
-    2,
-    2,
-    2,
+    4,
     3,
+    4,
+    4,
+    5,
+    4,
+    5,
+    4,
+    4,
+    5,
+    4,
+    4,
     5,
     5,
     5,
     6,
-    5,
-    7,
-    5,
-    5,
-    7,
-    5,
-    6,
     7,
     6,
-    8,
     7,
     8,
-    7,
-    8,
+    9,
+    11,
     10,
+    10,
+    11,
+    14,
     12,
+    13,
+    13,
+    14,
     11,
-    11,
-    15,
     14,
     15,
-    15,
+    12,
+    14,
+    12,
+    17,
     13,
-    13,
     15,
+    18,
+    18,
+    18,
+    16,
     16,
     18,
     18,
     18,
-    18,
-    18,
-    18,
-    18,
-    18,
-    18,
-    18
+    17
   ],
   "real_session_lengths": [
     16,

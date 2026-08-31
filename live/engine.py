@@ -62,7 +62,6 @@ MAX_KEPT_SESSIONS = 1000
 DEFAULT_ARM_SALT = "recovery-v1"
 CONNECTION_PROB = 0.1
 INFLUENCE_MAX_DEPTH = 2
-REFILL_THRESHOLD = 10.0
 VOCAB_PATH = "vocab.json"
 
 # Gap between one action and the next, in simulated seconds.
@@ -266,6 +265,7 @@ class LiveSimulation:
             start = random.uniform(0, 1.0)
             agent.action_history = []
             agent.history.clear()
+            agent.new_session_balance()
             sessions[agent.agent_id] = Session(
                 agent_id=agent.agent_id,
                 persona=agent.persona,
@@ -377,8 +377,6 @@ class LiveSimulation:
                 if action == "checkout":
                     session.end(Outcome.CONVERTED, Reason.PURCHASED, sim_time, revenue=price)
                     self._close(session)
-                    if agent.balance < REFILL_THRESHOLD:
-                        agent.refill_balance()
                     continue
 
                 # Quitting is a hazard, not a coin flip: it rises with the
@@ -418,8 +416,21 @@ class LiveSimulation:
                     self._close(session)
                     continue
 
-                if agent.should_advance_funnel():
-                    next_action = ACTIONS[ACTIONS.index(action) + 1]
+                # Moving deeper into the funnel is a matter of persona and
+                # attention -- except for the last step. Cart to checkout is a
+                # decision about money, so it is governed by what this shopper
+                # will pay rather than by the same coin flip as browsing. That
+                # is the transition a discount buys.
+                next_stage = ACTIONS[ACTIONS.index(action) + 1]
+                if next_stage == "checkout":
+                    advance_probability = session.friction.checkout_probability(
+                        session.effective_cart_value(), agent.balance
+                    )
+                else:
+                    advance_probability = agent.advance_prob
+
+                if random.random() < advance_probability:
+                    next_action = next_stage
                 else:
                     next_action = "browse"
                 scheduler.push(sim_time + self._delay(), agent_id, next_action)

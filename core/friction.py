@@ -32,8 +32,31 @@ can achieve, and reporting it is what separates a measured result from a rigged
 one -- an intervention that recovers everything is an intervention that cheated.
 
 **An intervention must act through this model, never around it.** A discount
-lowers cart_value, which lowers the price term, which lowers the hazard. There
-is deliberately no path that sets an outcome directly.
+lowers cart_value, which lowers both the quit hazard and the drag on funnel
+progression. There is deliberately no path that sets an outcome directly.
+
+Price acts on two things, because it does in life. It makes a shopper more
+likely to leave, and it makes them less likely to press on to checkout. The
+second channel was missing at first and the omission was invisible until a
+discount was measured against it: conversion turned out to be gated entirely by
+*reaching* checkout (6.1% of flagged sessions, with affordability failures at
+0.0%), so lowering the quit hazard only bought a session more time to wander
+until it hit the action cap. A discount had no route to an outcome at all, and
+no value of B_PRICE could give it one.
+
+The second channel is a **reservation price**, not a smooth drag, and that
+distinction is the whole reason discounts work. A smooth multiplier moves in
+proportion to the price change: cutting 15% off a basket shifts the willingness
+to proceed by roughly 15% of a fraction, which propagates to a quarter of a
+percentage point of conversion and vanishes into noise. Measured, it recovered
+1-2% of carts where the published benchmark is around 10%.
+
+Shoppers do not work that way. Each has a price above which they will not buy,
+and a discount matters exactly when it carries the basket across that line. It
+converts the shoppers whose reservation sits between the discounted price and
+the full one, and does nothing at all for anybody else -- which is also what
+makes the recoverable population a real, bounded thing rather than a smooth
+gradient. See advance_multiplier and RESERVATION_FRACTION.
 """
 import math
 import random as _random
@@ -66,6 +89,39 @@ RECOVERABLE_DRIVERS = frozenset({Driver.PRICE})
 # fitting to a number this model does not represent.
 B0 = -1.80          # baseline reluctance to quit
 B_PRICE = 3.20
+# What fraction of their wallet each persona will part with in one session,
+# drawn per session. This is the reservation price: a basket above it does not
+# get bought. Power buyers hold the most but commit a smaller share of it;
+# browsers will part with almost nothing, which is why they convert at ~0%.
+# Halved from a first guess after measurement: the original ranges put 72% of
+# baskets *under* the reservation price, which is backwards. For cart
+# abandonment to sit in the 70-85% band most baskets have to cost more than the
+# shopper will pay, and it is the ones just over the line that a discount moves.
+# At these values 74% of carts sit above the reservation price.
+RESERVATION_FRACTION = {
+    "power_buyer":   (0.018, 0.098),
+    "average_buyer": (0.049, 0.161),
+    "browser":       (0.014, 0.063),
+}
+DEFAULT_RESERVATION = RESERVATION_FRACTION["average_buyer"]
+
+# How readily a shopper who is happy with their basket proceeds to checkout.
+#
+# Browsing onward through the funnel is a matter of persona and attention, but
+# the step from cart to checkout is not: someone content with what a basket
+# costs mostly goes ahead and pays. Leaving that step as the same low
+# persona-driven coin flip as every other made price a rounding error -- only
+# 3.3% of sessions reached checkout at all, so nothing a discount did to
+# willingness could show up in conversion. This is the base rate for a shopper
+# comfortably under their reservation price; advance_multiplier scales it down
+# as the basket approaches and passes that line.
+CHECKOUT_INTENT = 0.72
+
+# How sharply the reservation bites, as a fraction of the reservation price.
+# At 0 it is a hard cliff; larger values soften it into a band, so a shopper
+# near their limit is merely less likely to proceed rather than unable to. The
+# band has to be comparable to the discount for a discount to move anyone.
+RESERVATION_SOFTNESS = 0.18
 B_DWELL = 0.28
 B_REVISIT = 0.16
 B_INTENT = 2.30
@@ -153,14 +209,21 @@ class Friction:
 
     intent: float
     price_sensitivity: float
+    reservation_fraction: float = 0.30
 
     @classmethod
     def draw(cls, persona: str, rng=_random) -> "Friction":
         traits = PERSONA_TRAITS.get(persona, DEFAULT_TRAITS)
+        reservation = RESERVATION_FRACTION.get(persona, DEFAULT_RESERVATION)
         return cls(
             intent=rng.uniform(*traits["intent"]),
             price_sensitivity=rng.uniform(*traits["price_sensitivity"]),
+            reservation_fraction=rng.uniform(*reservation),
         )
+
+    def reservation_price(self, balance: float) -> float:
+        """The most this shopper will pay in this session."""
+        return self.reservation_fraction * max(balance, 0.0)
 
     def affordability_pressure(self, cart_value: float, balance: float) -> float:
         """How far the basket outruns the wallet, scaled by how much it matters.
@@ -173,6 +236,38 @@ class Friction:
             return 0.0
         ratio = cart_value / max(balance, 1.0)
         return min(ratio, MAX_AFFORDABILITY_PRESSURE) * self.price_sensitivity
+
+    def advance_multiplier(self, cart_value: float, balance: float) -> float:
+        """How willing this shopper is to carry this basket to the next stage.
+
+        Returns 1.0 with no cart -- nobody is weighing a total they have not
+        seen. Otherwise it is a soft step around the reservation price: close to
+        1 while the basket is comfortably under, close to 0 once it is clearly
+        over, and steep in between.
+
+        The steep part is where a discount earns its keep. It converts exactly
+        the shoppers whose reservation lies between the discounted price and the
+        full one, and leaves everyone else untouched, which is both how
+        discounts behave in life and what makes the recoverable population
+        bounded rather than a smooth gradient.
+        """
+        if cart_value <= 0:
+            return 1.0
+        reservation = self.reservation_price(balance)
+        if reservation <= 0:
+            return 0.0
+        width = RESERVATION_SOFTNESS * reservation
+        return _sigmoid((reservation - cart_value) / max(width, 1e-9))
+
+    def checkout_probability(self, cart_value: float, balance: float) -> float:
+        """Chance this shopper carries this basket from cart to checkout.
+
+        High when the basket sits comfortably under what they will pay, falling
+        away as it crosses that line. This is the step a discount actually buys:
+        it is the only transition in the funnel governed by price rather than by
+        attention span.
+        """
+        return CHECKOUT_INTENT * self.advance_multiplier(cart_value, balance)
 
     def hazard(self, cart_value: float, balance: float, dwell: float,
                revisits: int) -> Hazard:
