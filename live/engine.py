@@ -41,6 +41,8 @@ from agents.social_graph import (
 from core.cart import cart_total
 from core.friction import Driver, Friction
 from core.session import Outcome, Reason, Session, reset_session_ids
+from recovery.assign import TREATMENT, arm_for
+from recovery.intervention import NUDGE_ACTION
 from data.persona_cluster import assign_agent_personas
 
 N_AGENTS = 50
@@ -56,6 +58,8 @@ MAX_IN_FILE = 60          # rolling window of events kept for the dashboard
 # A batch experiment passes keep_sessions=None to keep every session, because it
 # has to score all of them -- and it runs to a fixed size, so it cannot leak.
 MAX_KEPT_SESSIONS = 1000
+# Default experiment salt; see recovery/assign.py.
+DEFAULT_ARM_SALT = "recovery-v1"
 CONNECTION_PROB = 0.1
 INFLUENCE_MAX_DEPTH = 2
 REFILL_THRESHOLD = 10.0
@@ -102,7 +106,8 @@ class LiveSimulation:
     """Runs agents through the funnel forever, yielding one event at a time."""
 
     def __init__(self, policy, item_to_idx, n_agents=N_AGENTS, max_events=MAX_IN_FILE,
-                 seed=None, keep_sessions=MAX_KEPT_SESSIONS, detector=None):
+                 seed=None, keep_sessions=MAX_KEPT_SESSIONS, detector=None,
+                 interventions=None, treatment_share=0.5, arm_salt=DEFAULT_ARM_SALT):
         # Seed before anything draws: the social graph, the persona mix and every
         # later action all pull from the `random` module, including
         # policy_runtime.sample_logits. One seed therefore fixes an entire run,
@@ -127,6 +132,11 @@ class LiveSimulation:
         # exactly as before, which is what makes an untreated control arm and a
         # detector-only run the same simulation.
         self.detector = detector
+        # Optional recovery.intervention.InterventionPolicy. Requires a detector:
+        # there is nothing to treat without a flag.
+        self.interventions = interventions
+        self.treatment_share = treatment_share
+        self.arm_salt = arm_salt
 
         self.graph = build_social_graph(n_agents, connection_prob=CONNECTION_PROB)
         self.prereqs = build_prerequisites(FUNNEL_GRAPH)
@@ -293,6 +303,15 @@ class LiveSimulation:
                 sim_time, agent_id, action = result
                 agent = self.agents[agent_id]
                 session = sessions[agent_id]
+
+                # A nudge is not a funnel action -- it is the recovery offer
+                # arriving. It must be handled before the funnel gate, which
+                # would reject an action that is not a stage.
+                if action == NUDGE_ACTION:
+                    if self.interventions is not None:
+                        self.interventions.apply(session, sim_time)
+                    continue
+
                 if not session.is_open:
                     continue
 
@@ -310,7 +329,7 @@ class LiveSimulation:
 
                 price = None
                 if action == "checkout":
-                    total = session.cart_value
+                    total = session.effective_cart_value()
                     if not agent.can_afford(total):
                         # The most unambiguously price-driven exit there is: the
                         # basket cost more than the wallet held. A discount
@@ -339,6 +358,21 @@ class LiveSimulation:
                 # this action. At most one flag per session.
                 if self.detector is not None and session.flag is None:
                     session.flag = self.detector.evaluate(session, sim_time)
+                    if session.flag is not None:
+                        # Randomised at flag time, so the arms differ only in
+                        # whether they were treated. arm_for hashes rather than
+                        # drawing, so assignment consumes no randomness and an
+                        # untreated session behaves exactly as it would have
+                        # with no experiment running at all.
+                        session.arm = arm_for(
+                            session.session_id, self.arm_salt, self.treatment_share
+                        )
+                        if session.arm == TREATMENT and self.interventions is not None:
+                            issued = self.interventions.dispatch(session, sim_time)
+                            if issued is not None:
+                                scheduler.push(
+                                    issued.dispatched_at, agent_id, NUDGE_ACTION
+                                )
 
                 if action == "checkout":
                     session.end(Outcome.CONVERTED, Reason.PURCHASED, sim_time, revenue=price)
@@ -354,7 +388,7 @@ class LiveSimulation:
                 # abandonment a discount could move from abandonment it could
                 # not. See core/friction.py.
                 quit_now, hazard = session.friction.should_quit(
-                    cart_value=session.cart_value,
+                    cart_value=session.effective_cart_value(),
                     balance=agent.balance,
                     dwell=session.dwell(sim_time),
                     revisits=session.revisits(session.stage),
@@ -373,7 +407,7 @@ class LiveSimulation:
                     # way rather than leaving a sixth of abandonment with no
                     # cause recorded.
                     capped = session.friction.hazard(
-                        cart_value=session.cart_value,
+                        cart_value=session.effective_cart_value(),
                         balance=agent.balance,
                         dwell=session.dwell(sim_time),
                         revisits=session.revisits(session.stage),

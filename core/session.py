@@ -86,6 +86,16 @@ class Session:
     # one per session: the intervention is bounded, so the first flag is the
     # only one that can act.
     flag: object | None = None
+    # Experiment arm, assigned at flag time (recovery.assign). None means this
+    # session was never flagged and so was never in the experiment.
+    arm: str | None = None
+    # The recovery.intervention.Intervention issued for this session, if any.
+    intervention: object | None = None
+    # Fraction taken off the cart once a discount has landed. The only channel
+    # through which an intervention can affect an outcome: it lowers effective
+    # cart value, which lowers affordability pressure, which lowers the quit
+    # hazard. Nothing sets an outcome directly.
+    discount: float = 0.0
 
     outcome: str | None = None
     reason: str | None = None
@@ -136,6 +146,18 @@ class Session:
         if product_id is not None:
             self.products.append(product_id)
 
+    def effective_cart_value(self) -> float:
+        """What the shopper is actually being asked to pay.
+
+        Equals cart_value until a discount lands. Everything that reads a price
+        -- the quit hazard, the affordability check, the revenue booked at
+        checkout -- reads this, so a discount cannot be applied to the decision
+        without also being applied to the money.
+        """
+        if not self.discount:
+            return self.cart_value
+        return round(self.cart_value * (1.0 - self.discount), 2)
+
     def add_to_cart(self, product_id: str, value: float):
         self.cart.append(product_id)
         self.cart_value = value
@@ -175,6 +197,9 @@ class Session:
             "products": len(self.products),
             "cart_value": self.cart_value,
             "flagged": self.flag is not None,
+            "arm": self.arm,
+            "discount": self.discount,
+            "intervention_landed": bool(self.intervention and self.intervention.landed),
             "quit_driver": self.quit_driver,
             "recoverable": self.recoverable,
             "revenue": self.revenue,
