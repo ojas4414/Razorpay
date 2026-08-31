@@ -158,6 +158,32 @@ class AuditLog:
         )
         return {r["quit_driver"]: r["n"] for r in cursor.fetchall()}
 
+    def experiments(self) -> list:
+        """Experiment ids present, newest first, with their row counts."""
+        cursor = self._conn.execute(
+            "SELECT experiment_id, COUNT(*) AS n, MAX(row_id) AS last_row "
+            "FROM recovery_audit GROUP BY experiment_id ORDER BY last_row DESC"
+        )
+        return [{"experiment_id": r["experiment_id"], "rows": r["n"]}
+                for r in cursor.fetchall()]
+
+    def latest_experiment(self):
+        found = self.experiments()
+        return found[0]["experiment_id"] if found else None
+
+    def find_session(self, session_id: str, experiment_id=None):
+        """One decision, or None. The row a question about a shopper resolves to."""
+        if experiment_id is None:
+            cursor = self._conn.execute(
+                "SELECT * FROM recovery_audit WHERE session_id = ? "
+                "ORDER BY row_id DESC LIMIT 1", (session_id,))
+        else:
+            cursor = self._conn.execute(
+                "SELECT * FROM recovery_audit WHERE session_id = ? "
+                "AND experiment_id = ? LIMIT 1", (session_id, experiment_id))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
     def close(self):
         self._conn.close()
 

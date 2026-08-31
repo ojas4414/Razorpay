@@ -78,6 +78,41 @@ decision, keeping the features the detector actually saw so a decision can be
 explained months later. The experiment recomputes its headline numbers from the
 log and prints whether they reconcile.
 
+### Asking the pipeline questions (MCP)
+
+`recovery/mcp_server.py` exposes the pipeline as MCP tools, so an agent can be
+asked about it in words rather than SQL.
+
+```bash
+claude mcp add recovery -- python -m recovery.mcp_server
+```
+
+| Tool | Answers |
+|---|---|
+| `explain_decision` | "Why did this shopper get an offer?" — the trigger, the dwell/revisits/basket that fired it, the idempotency key, and how the session ended |
+| `experiment_summary` | Arms, effect, 95% CI, MDE and net margin, recomputed from the log |
+| `abandonment_drivers` | What is losing carts, and how much of it a discount could ever reach |
+| `run_counterfactual` | **Simulates a different offer and measures it** — a new discount rate, dispatch latency or targeting rule, returned with a confidence interval |
+
+The last one is why this is a server rather than a database wrapper. The harness
+underneath it is validated — the A/A comes back null and the A/B does not — so
+"what if we offered 20% instead of 15%" gets a measured answer instead of a
+guess.
+
+`experiment_summary` reproduces the published headline exactly from the audit
+trail alone, which is the check that the record is complete rather than
+decorative.
+
+**Nothing here can touch production.** The read tools sit on an append-only
+table with no UPDATE or DELETE; `run_counterfactual` starts a simulation and
+returns statistics. There is no path from a tool call to a live shopper, a real
+offer, or money, and a test asserts the module imports no HTTP, socket or
+subprocess machinery. Session counts are bounded so a tool call cannot run for
+an unbounded time.
+
+Tool logic is tested directly; the stdio transport is not, since no MCP client
+runs in CI.
+
 ### Two properties that make the result trustworthy
 
 **Arm assignment consumes no randomness.** The whole simulation runs off one
@@ -434,6 +469,9 @@ comms/           Redis and Kafka client helpers (both optional — see live/runn
 data/            data loading, persona clustering, social graph builder
 live/            the live simulation loop (engine.py), its in-process fan-out (bus.py),
                  and the background runner the gateway starts on boot (runner.py)
+recovery/        detector, arm assignment, intervention, analysis, audit trail,
+                 Kafka consumer, and the MCP tool server
+sim/             batch drivers: experiment, sweeps, detector evaluation
 validation/      behavioral metrics + benchmark verdicts
 tests/           pytest suite (python -m pytest tests/)
 visuals/         live dashboard (static HTML) and Vite/React dashboard

@@ -21,7 +21,9 @@ matplotlib
 #   pandas          data/loader.py, data/graph_builder.py, simulate.py
 #   scikit-learn    data/persona_cluster.py
 #   pytest          tests/ (run: python -m pytest tests/)
+#   mcp             recovery/mcp_server.py (the MCP tool server)
 # torch
 # pandas
 # scikit-learn
 # pytest
+# mcp
