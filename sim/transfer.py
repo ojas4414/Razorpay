@@ -128,7 +128,7 @@ def calibrate_in_world(n_sessions, seed):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sessions", type=int, default=DEFAULT_SESSIONS)
-    parser.add_argument("--out", default="transfer.json")
+    parser.add_argument("--out", default="results/transfer.json")
     args = parser.parse_args()
 
     print(f"Calibrating in the home world (seed {HOME_SEED}, "

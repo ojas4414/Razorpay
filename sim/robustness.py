@@ -159,7 +159,7 @@ def main():
     parser.add_argument("--sessions", type=int, default=DEFAULT_SESSIONS)
     parser.add_argument("--discount", type=float, default=0.15)
     parser.add_argument("--latency", type=float, default=0.5)
-    parser.add_argument("--out", default="robustness.json")
+    parser.add_argument("--out", default="results/robustness.json")
     args = parser.parse_args()
 
     seeds = list(range(FIRST_EVAL_SEED, FIRST_EVAL_SEED + args.seeds))

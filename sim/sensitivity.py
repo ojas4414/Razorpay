@@ -205,7 +205,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sessions", type=int, default=DEFAULT_SESSIONS)
     parser.add_argument("--perturbation", type=float, default=PERTURBATION)
-    parser.add_argument("--out", default="sensitivity.json")
+    parser.add_argument("--out", default="results/sensitivity.json")
     parser.add_argument("--workers", type=int, default=None,
                         help="parallel workers (default: cores minus headroom)")
     args = parser.parse_args()

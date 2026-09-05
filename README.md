@@ -302,8 +302,13 @@ integrations/  razorpay webhook adapter
 agents/        agent model, funnel, scheduler, social graph, policy runtime
 live/          engine, runner, in-process bus
 backend/       FastAPI gateway + product/cart/order/session services
+visuals/       recovery dashboard, simulator dashboard, generated charts
+results/       committed output of every harness — see results/README.md
 tests/         281 tests
 ```
+
+The dashboards are single-file pages that need no build step: open the gateway
+and they run. There is deliberately no npm toolchain in this repository.
 
 ---
 

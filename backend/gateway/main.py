@@ -127,7 +127,7 @@ GRID_PATH = os.environ.get("FF_GRID", "visuals/counterfactual_grid.json")
 # Sessions per point when the server builds the sweep itself. Smaller than the
 # committed sweep so a cold start finishes in minutes rather than an hour.
 GRID_SESSIONS = int(os.environ.get("FF_GRID_SESSIONS", "3000"))
-ROBUSTNESS_PATH = os.environ.get("FF_ROBUSTNESS", "robustness.json")
+ROBUSTNESS_PATH = os.environ.get("FF_ROBUSTNESS", "results/robustness.json")
 
 # Counterfactual runs happen in a subprocess: the simulation reseeds the global
 # RNG, and doing that in-process would reset the stream the live simulation

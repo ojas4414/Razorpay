@@ -171,7 +171,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sessions", type=int, default=DEFAULT_SESSIONS)
     parser.add_argument("--discount", type=float, default=DISCOUNT)
-    parser.add_argument("--out", default="uplift_result.json")
+    parser.add_argument("--out", default="results/uplift_result.json")
     args = parser.parse_args()
 
     print(f"Calibrating detector on seed {CALIBRATION_SEED}...")
