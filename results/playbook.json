@@ -1,0 +1,66 @@
+{
+  "sessions": 15000,
+  "seeds": [
+    42,
+    101,
+    202,
+    303,
+    404
+  ],
+  "discount": 0.15,
+  "fixed": {
+    "treat_rate": 0.0619,
+    "control_rate": 0.0413,
+    "treat_n": 2457,
+    "control_n": 2492,
+    "delta": 0.0205,
+    "ci_low": 0.0082,
+    "ci_high": 0.0329,
+    "z": 3.267,
+    "significant": true,
+    "mde": 0.0159,
+    "net": 6185.54,
+    "gross": 11296.71,
+    "cost": 5111.17,
+    "issued": 2457
+  },
+  "playbook": {
+    "treat_rate": 0.0468,
+    "control_rate": 0.0419,
+    "treat_n": 2455,
+    "control_n": 2551,
+    "delta": 0.0049,
+    "ci_low": -0.0065,
+    "ci_high": 0.0163,
+    "z": 0.842,
+    "significant": false,
+    "mde": 0.0159,
+    "net": 781.53,
+    "gross": 2438.69,
+    "cost": 1657.16,
+    "issued": 2500,
+    "escalations": 942,
+    "actions": {
+      "reminder": 107,
+      "discount_10": 1008,
+      "discount_20": 498,
+      "simplify_checkout": 665
+    }
+  },
+  "playbook_beats_fixed": false,
+  "diagnosis_agreement": 0.3324,
+  "diagnosis_matrix": {
+    "hesitation->hesitation": 157,
+    "churn->price": 112,
+    "churn->churn": 615,
+    "price->price": 818,
+    "price->intent": 365,
+    "churn->intent": 489,
+    "churn->hesitation": 1169,
+    "price->churn": 377,
+    "hesitation->intent": 114,
+    "price->hesitation": 477,
+    "hesitation->price": 30,
+    "hesitation->churn": 61
+  }
+}

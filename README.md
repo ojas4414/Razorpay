@@ -7,7 +7,7 @@
 Razorpay AI Builder Buildathon · Track 03, Revenue Recovery
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-281%20passing-34D399)](tests/)
+[![Tests](https://img.shields.io/badge/tests-312%20passing-34D399)](tests/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-gateway%20%2B%20services-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![MCP](https://img.shields.io/badge/MCP-4%20tools-A78BFA)](recovery/mcp_server.py)
 
@@ -60,7 +60,10 @@ Four components over a multi-agent shopping simulation.
 | | |
 |---|---|
 | **Detect** | Flags a cart-bearing session on either of two routes: a stall in a stage combined with hesitation, or a basket unusually large for that shopper's segment. Thresholds are derived from converting sessions, calibrated on a **held-out seed**. |
-| **Intervene** | One bounded discount per session, enforced by an idempotency key. Dispatched into the event scheduler with latency, so it can arrive too late and miss. |
+| **Diagnose** | Reads the detector's recorded features — basket against the segment, dwell, bounces, pause length — and names the dominant pressure. It never sees the true driver the simulation records; that field is kept to score the guess. |
+| **Decide** | Picks the action the diagnosis calls for: a discount for price, a reminder for hesitation, a simplified checkout for churn. Each acts on the pressure it targets, so an action aimed at the wrong cause does very little. |
+| **Intervene** | One bounded action per attempt, each with its own idempotency key. Dispatched into the event scheduler with latency, so it can arrive too late and miss. |
+| **Escalate** | Cheapest rung first; a discount only follows if the free action landed and the session is still at risk. Stops on an attempt cap, an exhausted ladder, the spend guard, the kill switch, or the session closing. |
 | **Measure** | Sessions randomised into arms **at flag time**. Two-proportion test with confidence intervals, minimum detectable effect, and an A/A null check. |
 | **Audit** | Append-only SQLite, one row per decision, keeping the features the detector saw. Kafka's first consumer materialises the same records. |
 
@@ -115,6 +118,44 @@ the bill — and there are configurations here where a programme recovers carts
 and loses money on every one. Margin carries a bootstrap interval because it
 depends on the rate difference *and* on what the recovered baskets were worth.
 
+### Does choosing the action beat one discount for everyone?
+
+`python -m sim.playbook_experiment --sessions 15000` — 5 seeds, pooled.
+
+| policy | actions | effect | net |
+|---|---|---|---|
+| flat 15% discount to everyone flagged | 2,457 | **+2.05%** (z=+3.27, significant) | **+6,186** |
+| playbook — action chosen by diagnosis, escalating | 2,500 (942 escalations) | +0.49% (z=+0.84, not significant) | +782 |
+
+**No.** The flat discount wins by 5,404 in net margin, and it is the only one of
+the two whose effect is significant.
+
+The reason is measurable, and it is the more useful finding. The playbook's
+diagnosis is scored against the true driver it never sees:
+
+```
+guessed          churn   hesitation   intent    price
+churn              615        1,169      489      112
+hesitation          61          157      114       30
+price              377          477      365      818
+
+agreement  33.2% of 4,784 abandoned sessions
+```
+
+Four classes, so chance is 25%. **The diagnosis is barely better than chance.**
+Nearly half of everything it calls churn is really hesitation. Routing to the
+right remedy cannot work when the routing is close to a coin toss — and the
+playbook duly spends less (1,657 against 5,111) and recovers far less (2,439
+against 11,297).
+
+The honest reading is that **detection and diagnosis are different problems.**
+The detector finds at-risk sessions well (1.29× lift over base rate); telling
+*why* a particular session is at risk, from the same observables, is much harder
+and this one does not do it. That is a bottleneck worth naming rather than a
+mechanism worth abandoning: better diagnosis would make the same playbook
+worthwhile, and the escalation machinery, the caps and the audit trail are all
+independent of it.
+
 ### Is the effect an artefact of the calibration?
 
 Every one of ten behavioural constants perturbed ±20%, five seeds per cell:
@@ -165,6 +206,13 @@ top bucket against 7.7% in the rest — but the derived decision rule loses to
 simply treating everyone flagged, at both 15% (3,159 vs 6,900 net) and 40%
 (8,706 vs 9,279). The ranking works; the policy does not convert it into money.
 
+**A reminder that only relieved quit pressure made things worse.** Actions
+originally lowered the pressure they targeted and nothing else, so a reminder
+kept a stalled session alive without moving it forward — straight into the
+action cap, counted as abandoned. Measured at −3.41% (z=−2.56) before actions
+were given a progression effect as well. A real reminder pushes a shopper
+onward; modelling it as merely a reason to stay was wrong.
+
 **Four claims were withdrawn during development**, all for one reason: a single
 5,000-session run carries a standard deviation near 1.7pp, so one run measures
 the seed as much as the effect.
@@ -201,6 +249,7 @@ python -m sim.experiment      --aa                          # the null check
 python -m sim.sensitivity     --workers 8                   # is it calibration?
 python -m sim.transfer                                      # do thresholds move?
 python -m sim.precompute_grid                               # dose-response
+python -m sim.playbook_experiment --sessions 15000           # action selection
 ```
 
 Everything is seeded and reproduces exactly. Independent experiments run across
@@ -294,17 +343,17 @@ cannot drift apart — they had, and it hid a bug where every price was 0.00.
 
 ```
 core/          pricing, catalog, cart, orders, session, friction
-recovery/      detector, assign, intervention, analysis, audit, stream,
-               uplift, safety, jobs, mcp_server
+recovery/      detector, assign, intervention, playbook, analysis, audit,
+               stream, uplift, safety, jobs, mcp_server
 sim/           experiment, robustness, sensitivity, transfer, precompute_grid,
-               uplift_experiment, parallel
+               uplift_experiment, playbook_experiment, parallel
 integrations/  razorpay webhook adapter
 agents/        agent model, funnel, scheduler, social graph, policy runtime
 live/          engine, runner, in-process bus
 backend/       FastAPI gateway + product/cart/order/session services
 visuals/       recovery dashboard, simulator dashboard, generated charts
 results/       committed output of every harness — see results/README.md
-tests/         281 tests
+tests/         312 tests
 ```
 
 The dashboards are single-file pages that need no build step: open the gateway

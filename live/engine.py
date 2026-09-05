@@ -47,6 +47,7 @@ from core.friction import Driver, Friction
 from core.session import Outcome, Reason, Session, reset_session_ids
 from recovery.assign import TREATMENT, arm_for
 from recovery.intervention import NUDGE_ACTION
+from recovery.playbook import PlaybookPolicy
 from data.persona_cluster import assign_agent_personas
 
 N_AGENTS = 50
@@ -70,6 +71,10 @@ VOCAB_PATH = "vocab.json"
 
 # Gap between one action and the next, in simulated seconds.
 ACTION_DELAY_MIN, ACTION_DELAY_MAX = 0.5, 3.0
+
+# Scheduler action for "check whether the last recovery attempt worked".
+# Like NUDGE_ACTION it is deliberately not a funnel stage.
+ESCALATE_ACTION = "escalate"
 
 # How strongly a shopper avoids products that would push the basket past what
 # they will pay. On by default: with it off, the policy's price-blind choices
@@ -125,8 +130,8 @@ class LiveSimulation:
 
     def __init__(self, policy, item_to_idx, n_agents=N_AGENTS, max_events=MAX_IN_FILE,
                  seed=None, keep_sessions=MAX_KEPT_SESSIONS, detector=None,
-                 interventions=None, treatment_share=0.5, arm_salt=DEFAULT_ARM_SALT,
-                 budget_aware=True):
+                 interventions=None, playbook=None, treatment_share=0.5,
+                 arm_salt=DEFAULT_ARM_SALT, budget_aware=True):
         # Seed before anything draws: the social graph, the persona mix and every
         # later action all pull from the `random` module, including
         # policy_runtime.sample_logits. One seed therefore fixes an entire run,
@@ -154,6 +159,10 @@ class LiveSimulation:
         # Optional recovery.intervention.InterventionPolicy. Requires a detector:
         # there is nothing to treat without a flag.
         self.interventions = interventions
+        # Optional recovery.playbook.PlaybookPolicy. Chooses the action by what
+        # the detector saw and escalates if the cheap one fails; mutually
+        # exclusive with the fixed-discount policy above.
+        self.playbook = playbook
         self.treatment_share = treatment_share
         self.arm_salt = arm_salt
         self.budget_aware = budget_aware
@@ -363,6 +372,27 @@ class LiveSimulation:
                 if action == NUDGE_ACTION:
                     if self.interventions is not None:
                         self.interventions.apply(session, sim_time)
+                    elif self.playbook is not None:
+                        landed = self.playbook.apply(session, sim_time)
+                        # If it landed and the session is still in trouble later,
+                        # come back and try the next rung. Bounded by the
+                        # playbook's own attempt cap and the spend guard.
+                        if landed and session.is_open:
+                            scheduler.push(
+                                sim_time + self.playbook.escalation_delay,
+                                agent_id, ESCALATE_ACTION)
+                    continue
+
+                if action == ESCALATE_ACTION:
+                    # Escalate only if the shopper is still here and still at
+                    # risk. A session that recovered on its own is left alone.
+                    if (self.playbook is not None and session.is_open
+                            and session.flag is not None and self.detector is not None
+                            and self.detector.evaluate(session, sim_time) is not None):
+                        issued = self.playbook.dispatch(session, sim_time)
+                        if issued is not None:
+                            scheduler.push(issued.dispatched_at, agent_id,
+                                           NUDGE_ACTION)
                     continue
 
                 if not session.is_open:
@@ -448,6 +478,12 @@ class LiveSimulation:
                                 scheduler.push(
                                     issued.dispatched_at, agent_id, NUDGE_ACTION
                                 )
+                        elif session.arm == TREATMENT and self.playbook is not None:
+                            issued = self.playbook.dispatch(session, sim_time)
+                            if issued is not None:
+                                scheduler.push(
+                                    issued.dispatched_at, agent_id, NUDGE_ACTION
+                                )
 
                 if action == "checkout":
                     session.end(Outcome.CONVERTED, Reason.PURCHASED, sim_time, revenue=price)
@@ -463,8 +499,8 @@ class LiveSimulation:
                 quit_now, hazard = session.friction.should_quit(
                     cart_value=session.effective_cart_value(),
                     balance=agent.balance,
-                    dwell=session.dwell(sim_time),
-                    revisits=session.revisits(session.stage),
+                    dwell=session.effective_dwell(sim_time),
+                    revisits=session.effective_revisits(session.stage),
                 )
                 if quit_now:
                     session.quit_driver = hazard.driver
@@ -482,8 +518,8 @@ class LiveSimulation:
                     capped = session.friction.hazard(
                         cart_value=session.effective_cart_value(),
                         balance=agent.balance,
-                        dwell=session.dwell(sim_time),
-                        revisits=session.revisits(session.stage),
+                        dwell=session.effective_dwell(sim_time),
+                        revisits=session.effective_revisits(session.stage),
                     )
                     session.quit_driver = capped.driver
                     session.recoverable = capped.recoverable
@@ -501,6 +537,10 @@ class LiveSimulation:
                     advance_probability = session.friction.checkout_probability(
                         session.effective_cart_value(), agent.balance
                     )
+                    # A recovery action that re-engages or simplifies improves
+                    # the odds of pressing on. Capped at certainty.
+                    advance_probability = min(
+                        1.0, advance_probability * session.advance_boost)
                 else:
                     advance_probability = agent.advance_prob
 

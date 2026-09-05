@@ -87,6 +87,17 @@ class Session:
     # of what, and therefore whether an intervention could ever have moved it.
     quit_driver: str | None = None
     recoverable: bool = False
+    # Relief granted by recovery actions. A reminder restarts the stall clock;
+    # simplifying the checkout forgives a bounce. Each lowers exactly the
+    # pressure it targets, so an action aimed at the wrong cause does very
+    # little -- which is the point of choosing by diagnosis.
+    dwell_relief: float = 0.0
+    revisit_relief: int = 0
+    # Multiplier on the odds of progressing to the next stage, granted by a
+    # recovery action. 1.0 means untouched.
+    advance_boost: float = 1.0
+    # recovery.playbook.Attempt records, in order taken.
+    attempts: list = field(default_factory=list)
     # Ground truth captured when the flag was raised, for analysis only. Never
     # shown to the detector: it is the shopper's private willingness to pay, and
     # a detector that could read it would be an oracle. Kept so the headroom of
@@ -126,6 +137,14 @@ class Session:
 
     def elapsed(self, now: float) -> float:
         return now - self.started_at
+
+    def effective_dwell(self, now: float) -> float:
+        """Stall time as the shopper experiences it, after any re-engagement."""
+        return max(0.0, self.dwell(now) - self.dwell_relief)
+
+    def effective_revisits(self, stage: str) -> int:
+        """Bounces still weighing on the shopper, after any forgiven."""
+        return max(0, self.revisits(stage) - self.revisit_relief)
 
     def revisits(self, stage: str) -> int:
         """Times this stage was entered *again* after the first visit."""
@@ -218,6 +237,7 @@ class Session:
             "products": len(self.products),
             "cart_value": self.cart_value,
             "flagged": self.flag is not None,
+            "attempts": [a.summary() for a in self.attempts],
             "arm": self.arm,
             "discount": self.discount,
             "intervention_landed": bool(self.intervention and self.intervention.landed),
