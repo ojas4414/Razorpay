@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Revenue Recovery — RL-USERS</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background:#0F0F0F; color:#E5E7EB; font-family: system-ui, -apple-system, sans-serif; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(-6px);} to { opacity:1; transform:none; } }
+    @keyframes pulse  { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    .row-in { animation: fadeIn .3s ease; }
+    .dot { animation: pulse 1.3s ease-in-out infinite; }
+    ::-webkit-scrollbar { width:8px; height:8px; }
+    ::-webkit-scrollbar-thumb { background:#2A2A2A; border-radius:4px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+const S = {
+  bg:'#0F0F0F', card:'#161616', border:'#262626', dim:'#8B8B8B',
+  green:'#34D399', red:'#F87171', blue:'#60A5FA', amber:'#FBBF24', purple:'#A78BFA',
+};
+const card = (extra={}) => ({
+  background:S.card, border:`1px solid ${S.border}`, borderRadius:12,
+  padding:20, ...extra,
+});
+const mono = { fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace' };
+const pct = (v, d=2) => `${(v*100).toFixed(d)}%`;
+const money = (v) => v == null ? '—' : v.toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
+
+/* ─── header ─── */
+const Header = ({ live }) => (
+  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+                marginBottom:24, flexWrap:'wrap', gap:12 }}>
+    <div>
+      <h1 style={{ fontSize:'1.5rem', fontWeight:700, letterSpacing:'-0.02em' }}>
+        Revenue Recovery
+      </h1>
+      <p style={{ color:S.dim, fontSize:'0.82rem', marginTop:4 }}>
+        Detect at-risk checkouts · intervene once · measure the difference · log every decision
+      </p>
+    </div>
+    <div style={{ display:'flex', alignItems:'center', gap:8, ...mono, fontSize:'0.76rem' }}>
+      <span className={live ? 'dot' : ''} style={{
+        width:8, height:8, borderRadius:'50%',
+        background: live ? S.green : S.dim, display:'inline-block' }} />
+      {live ? 'LIVE SIMULATION' : 'connecting…'}
+    </div>
+  </div>
+);
+
+/* ─── the headline result ─── */
+const Result = ({ ab, aa }) => {
+  if (!ab?.found) return (
+    <div style={card()}>
+      <p style={{ color:S.dim }}>No experiment in the audit trail yet. Run
+        <code style={{ ...mono, color:S.blue }}> python -m sim.experiment </code>
+        to populate it.</p>
+    </div>
+  );
+  const r = ab.result, m = ab.margin;
+  const sig = r.significant;
+  return (
+    <div style={card()}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
+        <h3 style={{ fontSize:'1rem' }}>Did the intervention work?</h3>
+        <span style={{ ...mono, fontSize:'0.7rem', color:S.dim }}>{ab.experiment_id}</span>
+      </div>
+
+      <div style={{ display:'flex', gap:28, marginTop:18, flexWrap:'wrap' }}>
+        <Stat label="treatment" value={pct(r.treat_rate)} sub={`n=${r.treat_n}`} color={S.green} big />
+        <Stat label="control"   value={pct(r.control_rate)} sub={`n=${r.control_n}`} color={S.dim} big />
+        <Stat label="difference" value={`${r.delta >= 0 ? '+' : ''}${pct(r.delta)}`}
+              sub={`95% CI ${pct(r.ci_low)} → ${pct(r.ci_high)}`}
+              color={sig ? S.green : S.amber} big />
+      </div>
+
+      {/* CI bar */}
+      <CIBar low={r.ci_low} high={r.ci_high} delta={r.delta} />
+
+      <div style={{ display:'flex', gap:10, marginTop:16, flexWrap:'wrap' }}>
+        <Badge ok={sig} text={sig ? `SIGNIFICANT  z=${r.z}` : `not significant  z=${r.z}`} />
+        <Badge ok={null} text={`MDE ${pct(r.mde)}`} />
+        {aa?.found && (
+          <Badge ok={!aa.result.significant}
+                 text={`A/A null  ${aa.result.delta >= 0 ? '+' : ''}${pct(aa.result.delta)}  z=${aa.result.z}`} />
+        )}
+      </div>
+
+      <p style={{ color:S.dim, fontSize:'0.76rem', marginTop:14, lineHeight:1.6 }}>
+        The <strong style={{color:S.purple}}>A/A check</strong> runs the same detector, the same
+        arm assignment and the same scheduling with <em>nothing applied</em>. It must come back
+        null — that is what separates a measurement from an artefact of the machinery.
+      </p>
+    </div>
+  );
+};
+
+const CIBar = ({ low, high, delta }) => {
+  const span = Math.max(Math.abs(low), Math.abs(high)) * 1.35 || 0.05;
+  const x = v => ((v + span) / (2*span)) * 100;
+  const crossesZero = low < 0 && high > 0;
+  return (
+    <div style={{ marginTop:20 }}>
+      <div style={{ position:'relative', height:34 }}>
+        <div style={{ position:'absolute', top:15, left:0, right:0, height:2, background:S.border }} />
+        <div style={{ position:'absolute', top:6, left:`${x(0)}%`, width:1, height:20,
+                      background:S.dim, opacity:0.8 }} />
+        <div style={{ position:'absolute', top:12, left:`${x(low)}%`, width:`${x(high)-x(low)}%`,
+                      height:8, borderRadius:4,
+                      background: crossesZero ? S.amber : S.green, opacity:0.35 }} />
+        <div style={{ position:'absolute', top:8, left:`${x(delta)}%`, width:3, height:16,
+                      background: crossesZero ? S.amber : S.green, borderRadius:2 }} />
+      </div>
+      <div style={{ display:'flex', justifyContent:'space-between', ...mono,
+                    fontSize:'0.68rem', color:S.dim }}>
+        <span>{pct(-span,1)}</span>
+        <span>0 = no effect</span>
+        <span>+{pct(span,1)}</span>
+      </div>
+    </div>
+  );
+};
+
+const Stat = ({ label, value, sub, color, big }) => (
+  <div>
+    <div style={{ color:S.dim, fontSize:'0.72rem', textTransform:'uppercase',
+                  letterSpacing:'0.06em' }}>{label}</div>
+    <div style={{ ...mono, fontSize: big ? '1.9rem' : '1.2rem', color, fontWeight:600,
+                  lineHeight:1.25 }}>{value}</div>
+    {sub && <div style={{ ...mono, color:S.dim, fontSize:'0.7rem' }}>{sub}</div>}
+  </div>
+);
+
+const Badge = ({ ok, text }) => {
+  const c = ok === null ? S.dim : ok ? S.green : S.amber;
+  return <span style={{ ...mono, fontSize:'0.7rem', color:c, border:`1px solid ${c}44`,
+                        background:`${c}14`, padding:'4px 10px', borderRadius:20 }}>{text}</span>;
+};
+
+/* ─── margin ─── */
+const Margin = ({ ab }) => {
+  if (!ab?.found) return null;
+  const m = ab.margin;
+  const max = Math.max(m.gross_recovered, m.discount_cost, 1);
+  const bar = (v, color) => (
+    <div style={{ background:S.border, borderRadius:4, height:9, overflow:'hidden' }}>
+      <div style={{ width:`${Math.min(100, (Math.abs(v)/max)*100)}%`, height:'100%',
+                    background:color, borderRadius:4 }} />
+    </div>
+  );
+  return (
+    <div style={card()}>
+      <h3 style={{ fontSize:'1rem' }}>Net margin, not recovered revenue</h3>
+      <p style={{ color:S.dim, fontSize:'0.76rem', marginTop:6, marginBottom:18, lineHeight:1.6 }}>
+        The discount is billed on <em>every</em> treated conversion — including shoppers who
+        would have bought anyway. Gross recovered revenue counts the upside and ignores the bill.
+      </p>
+      {[['gross recovered', m.gross_recovered, S.green],
+        ['discount cost',   m.discount_cost,   S.red]].map(([l,v,c]) => (
+        <div key={l} style={{ marginBottom:14 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:5,
+                        fontSize:'0.82rem' }}>
+            <span>{l}</span><span style={{ ...mono, color:c }}>{money(v)}</span>
+          </div>
+          {bar(v, c)}
+        </div>
+      ))}
+      <div style={{ borderTop:`1px solid ${S.border}`, marginTop:16, paddingTop:14,
+                    display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
+        <span style={{ fontSize:'0.9rem' }}>net</span>
+        <span style={{ ...mono, fontSize:'1.4rem', fontWeight:600,
+                       color: m.margin_positive ? S.green : S.red }}>
+          {m.margin_positive ? '+' : ''}{money(m.net)}
+        </span>
+      </div>
+      <p style={{ color:S.dim, fontSize:'0.72rem', marginTop:10 }}>
+        Synthetic order values — illustrative, not a revenue forecast.
+      </p>
+    </div>
+  );
+};
+
+/* ─── drivers ─── */
+const Drivers = ({ d }) => {
+  if (!d?.found) return null;
+  const colors = { price:S.green, hesitation:S.amber, churn:S.blue, intent:S.dim };
+  const entries = Object.entries(d.by_driver);
+  return (
+    <div style={card()}>
+      <h3 style={{ fontSize:'1rem' }}>Why carts are lost</h3>
+      <p style={{ color:S.dim, fontSize:'0.76rem', marginTop:6, marginBottom:18, lineHeight:1.6 }}>
+        Ground truth the simulation has and a live system never does. Only
+        <strong style={{ color:S.green }}> price-driven </strong>
+        losses can be moved by a discount — the rest cannot, whatever its size.
+      </p>
+      {entries.map(([k, v]) => (
+        <div key={k} style={{ marginBottom:13 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:5,
+                        fontSize:'0.82rem' }}>
+            <span style={{ color: k === 'price' ? S.green : '#E5E7EB' }}>{k}</span>
+            <span style={{ ...mono, color:S.dim }}>{pct(v.share,1)} · {v.n}</span>
+          </div>
+          <div style={{ background:S.border, borderRadius:4, height:9, overflow:'hidden' }}>
+            <div style={{ width:`${v.share*100}%`, height:'100%',
+                          background: colors[k] || S.dim, borderRadius:4 }} />
+          </div>
+        </div>
+      ))}
+      <div style={{ borderTop:`1px solid ${S.border}`, marginTop:14, paddingTop:12 }}>
+        <Stat label="recoverable ceiling" value={pct(d.recoverable_share,1)}
+              sub="the most any discount could ever reach" color={S.green} />
+      </div>
+    </div>
+  );
+};
+
+/* ─── audit trail ─── */
+const Audit = ({ decisions, onPick, picked }) => (
+  <div style={card({ padding:0, overflow:'hidden' })}>
+    <div style={{ padding:'18px 20px 12px' }}>
+      <h3 style={{ fontSize:'1rem' }}>Audit trail</h3>
+      <p style={{ color:S.dim, fontSize:'0.76rem', marginTop:6 }}>
+        Append-only. Click a row to see why it was flagged.
+      </p>
+    </div>
+    <div style={{ maxHeight:360, overflowY:'auto' }}>
+      <table style={{ width:'100%', borderCollapse:'collapse', ...mono, fontSize:'0.74rem' }}>
+        <thead>
+          <tr style={{ color:S.dim, textAlign:'left', position:'sticky', top:0,
+                       background:S.card }}>
+            {['session','arm','trigger','cart','outcome'].map(h => (
+              <th key={h} style={{ padding:'8px 12px', borderBottom:`1px solid ${S.border}`,
+                                   fontWeight:500 }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {decisions.map(d => (
+            <tr key={d.session_id} className="row-in" onClick={() => onPick(d.session_id)}
+                style={{ cursor:'pointer',
+                         background: picked === d.session_id ? '#1E1E1E' : 'transparent' }}>
+              <td style={{ padding:'7px 12px', borderBottom:`1px solid ${S.border}` }}>
+                {d.session_id}</td>
+              <td style={{ padding:'7px 12px', borderBottom:`1px solid ${S.border}`,
+                           color: d.arm === 'treatment' ? S.green : S.dim }}>
+                {d.arm}{d.arm === 'treatment' && !d.landed ? ' (missed)' : ''}</td>
+              <td style={{ padding:'7px 12px', borderBottom:`1px solid ${S.border}`,
+                           color:S.blue }}>{d.trigger}</td>
+              <td style={{ padding:'7px 12px', borderBottom:`1px solid ${S.border}` }}>
+                {money(d.cart_value)}</td>
+              <td style={{ padding:'7px 12px', borderBottom:`1px solid ${S.border}`,
+                           color: d.outcome === 'converted' ? S.green : S.red }}>
+                {d.outcome === 'converted' ? 'converted' : d.reason_code}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+);
+
+/* ─── explain one decision ─── */
+const Explain = ({ detail }) => {
+  if (!detail) return (
+    <div style={card()}>
+      <h3 style={{ fontSize:'1rem' }}>Why did this shopper get an offer?</h3>
+      <p style={{ color:S.dim, fontSize:'0.8rem', marginTop:10 }}>
+        Pick a row from the audit trail. The same answer is available to an agent
+        over MCP via <code style={{ ...mono, color:S.blue }}>explain_decision</code>.
+      </p>
+    </div>
+  );
+  if (!detail.found) return <div style={card()}><p style={{color:S.dim}}>{detail.message}</p></div>;
+  const ev = detail.why_flagged.evidence;
+  return (
+    <div style={card()}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
+        <h3 style={{ fontSize:'1rem' }}>Why this shopper was flagged</h3>
+        <span style={{ ...mono, fontSize:'0.72rem', color:S.blue }}>{detail.session_id}</span>
+      </div>
+      <div style={{ marginTop:14, display:'grid',
+                    gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))', gap:14 }}>
+        <Stat label="trigger"  value={detail.why_flagged.trigger} color={S.blue} />
+        <Stat label="arm"      value={detail.arm}
+              color={detail.arm === 'treatment' ? S.green : S.dim} />
+        <Stat label="outcome"  value={detail.outcome}
+              color={detail.outcome === 'converted' ? S.green : S.red} />
+        <Stat label="cause"    value={detail.quit_driver || '—'}
+              color={detail.was_recoverable ? S.green : S.dim} />
+      </div>
+      <div style={{ marginTop:18 }}>
+        <div style={{ color:S.dim, fontSize:'0.72rem', textTransform:'uppercase',
+                      letterSpacing:'0.06em', marginBottom:8 }}>
+          evidence the detector saw
+        </div>
+        <div style={{ ...mono, fontSize:'0.74rem', background:'#101010',
+                      border:`1px solid ${S.border}`, borderRadius:8, padding:12,
+                      display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',
+                      gap:'6px 16px' }}>
+          {Object.entries(ev).map(([k,v]) => (
+            <div key={k} style={{ display:'flex', justifyContent:'space-between' }}>
+              <span style={{ color:S.dim }}>{k}</span>
+              <span>{typeof v === 'number' ? v.toFixed(2) : String(v)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{ marginTop:16, fontSize:'0.8rem', lineHeight:1.7 }}>
+        <div><span style={{ color:S.dim }}>offer: </span>{detail.offer}</div>
+        <div><span style={{ color:S.dim }}>idempotency key: </span>
+          <span style={mono}>{detail.idempotency_key || '—'}</span></div>
+        <div><span style={{ color:S.dim }}>detector: </span>
+          <span style={mono}>{detail.detector_version}</span></div>
+      </div>
+    </div>
+  );
+};
+
+/* ─── live feed ─── */
+const Live = ({ events, stats }) => (
+  <div style={card({ padding:0, overflow:'hidden' })}>
+    <div style={{ padding:'18px 20px 12px', display:'flex',
+                  justifyContent:'space-between', alignItems:'baseline' }}>
+      <h3 style={{ fontSize:'1rem' }}>Live simulation</h3>
+      <span style={{ ...mono, fontSize:'0.7rem', color:S.dim }}>
+        {stats.sessions_started ? `${stats.sessions_started} sessions` : ''}
+        {stats.cart_abandonment_rate != null
+          ? ` · cart abandonment ${pct(stats.cart_abandonment_rate,1)}` : ''}
+      </span>
+    </div>
+    <div style={{ maxHeight:300, overflowY:'auto' }}>
+      <table style={{ width:'100%', borderCollapse:'collapse', ...mono, fontSize:'0.72rem' }}>
+        <tbody>
+          {events.slice(0,40).map((e,i) => (
+            <tr key={`${e.session_id}-${e.sim_time}-${i}`} className="row-in">
+              <td style={{ padding:'6px 12px', color:S.dim, borderBottom:`1px solid ${S.border}` }}>
+                {e.time}</td>
+              <td style={{ padding:'6px 12px', borderBottom:`1px solid ${S.border}` }}>
+                #{e.agent_id}</td>
+              <td style={{ padding:'6px 12px', borderBottom:`1px solid ${S.border}`,
+                           color: e.action === 'checkout' ? S.green
+                                : e.action === 'cart' ? S.amber : S.dim }}>
+                {e.action}</td>
+              <td style={{ padding:'6px 12px', borderBottom:`1px solid ${S.border}`,
+                           color:S.dim }}>{e.product}</td>
+              <td style={{ padding:'6px 12px', borderBottom:`1px solid ${S.border}`,
+                           textAlign:'right' }}>
+                {e.cart_value ? money(e.cart_value) : ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+);
+
+/* ─── app ─── */
+const App = () => {
+  const [ab, setAb] = useState(null);
+  const [aa, setAa] = useState(null);
+  const [drivers, setDrivers] = useState(null);
+  const [decisions, setDecisions] = useState([]);
+  const [picked, setPicked] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [stats, setStats] = useState({});
+  const [live, setLive] = useState(false);
+
+  useEffect(() => {
+    const j = (u) => fetch(u).then(r => r.json()).catch(() => null);
+    j('/recovery/experiments').then(list => {
+      if (!list?.experiments?.length) return;
+      const abId = (list.experiments.find(e => e.experiment_id.startsWith('ab-'))
+                    || list.experiments[0]).experiment_id;
+      const aaId = (list.experiments.find(e => e.experiment_id.startsWith('aa-')) || {}).experiment_id;
+      j(`/recovery/experiment?experiment_id=${abId}`).then(setAb);
+      j(`/recovery/drivers?experiment_id=${abId}`).then(setDrivers);
+      j(`/recovery/decisions?experiment_id=${abId}&limit=60`)
+        .then(d => setDecisions(d?.decisions || []));
+      if (aaId) j(`/recovery/experiment?experiment_id=${aaId}`).then(setAa);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!picked) return;
+    fetch(`/recovery/decision/${picked}`).then(r => r.json()).then(setDetail).catch(()=>{});
+  }, [picked]);
+
+  useEffect(() => {
+    let ws;
+    try {
+      ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/live`);
+      ws.onmessage = (m) => {
+        const p = JSON.parse(m.data);
+        if (p.events) setEvents(p.events);
+        if (p.stats)  setStats(p.stats);
+        setLive(p.status === 'running');
+      };
+      ws.onclose = () => setLive(false);
+    } catch (_) { setLive(false); }
+    return () => ws && ws.close();
+  }, []);
+
+  return (
+    <div style={{ maxWidth:1240, margin:'0 auto', padding:'32px 24px 64px' }}>
+      <Header live={live} />
+      <div style={{ display:'grid', gap:20 }}>
+        <Result ab={ab} aa={aa} />
+        <div style={{ display:'grid', gap:20, gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))' }}>
+          <Margin ab={ab} />
+          <Drivers d={drivers} />
+        </div>
+        <div style={{ display:'grid', gap:20, gridTemplateColumns:'repeat(auto-fit,minmax(340px,1fr))' }}>
+          <Audit decisions={decisions} onPick={setPicked} picked={picked} />
+          <Explain detail={detail} />
+        </div>
+        <Live events={events} stats={stats} />
+      </div>
+      <p style={{ color:S.dim, fontSize:'0.72rem', textAlign:'center', marginTop:32,
+                  ...mono, lineHeight:1.8 }}>
+        Synthetic order values · behavioural model calibrated to published aggregate benchmarks<br/>
+        The method transfers; the magnitudes are not a prediction about live traffic
+      </p>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

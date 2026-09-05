@@ -11,6 +11,12 @@ from fastapi.staticfiles import StaticFiles
 
 from comms.kafka_client import get_producer, publish_event
 from live.runner import LiveRunner
+from recovery.audit import AuditLog
+from recovery.mcp_server import (
+    abandonment_drivers,
+    experiment_summary,
+    explain_decision,
+)
 
 _producer = None
 
@@ -111,6 +117,72 @@ async def post_session_start(request: Request):
     return response
 
 
+# -- recovery pipeline -------------------------------------------------------
+# These serve the same functions the MCP tools call, so the dashboard and an
+# agent asking in words cannot end up reporting different numbers.
+AUDIT_DB = os.environ.get("FF_AUDIT_DB", "recovery_audit.db")
+
+
+@app.get("/recovery/experiments")
+async def recovery_experiments():
+    """Experiments present in the audit trail, newest first."""
+    audit = AuditLog(AUDIT_DB)
+    try:
+        return {"experiments": audit.experiments(), "latest": audit.latest_experiment()}
+    finally:
+        audit.close()
+
+
+@app.get("/recovery/experiment")
+async def recovery_experiment(experiment_id: str | None = None):
+    """Arms, effect, confidence interval and margin, recomputed from the log."""
+    return experiment_summary(experiment_id, AUDIT_DB)
+
+
+@app.get("/recovery/drivers")
+async def recovery_drivers(experiment_id: str | None = None):
+    """What is losing carts, and how much of it a discount could reach."""
+    return abandonment_drivers(experiment_id, AUDIT_DB)
+
+
+@app.get("/recovery/decisions")
+async def recovery_decisions(experiment_id: str | None = None, limit: int = 40):
+    """Recent flagged sessions, treated and untreated."""
+    audit = AuditLog(AUDIT_DB)
+    try:
+        target = experiment_id or audit.latest_experiment()
+        if target is None:
+            return {"experiment_id": None, "decisions": []}
+        rows = audit.rows(target)[-max(1, min(limit, 200)):]
+        return {
+            "experiment_id": target,
+            "decisions": [
+                {
+                    "session_id": r["session_id"],
+                    "persona": r["persona"],
+                    "arm": r["arm"],
+                    "trigger": r["flag_trigger"],
+                    "cart_value": r["cart_value"],
+                    "discount_amount": r["discount_amount"],
+                    "outcome": r["outcome"],
+                    "reason_code": r["reason_code"],
+                    "quit_driver": r["quit_driver"],
+                    "recoverable": bool(r["recoverable"]),
+                    "landed": r["applied_at_sim"] is not None,
+                }
+                for r in reversed(rows)
+            ],
+        }
+    finally:
+        audit.close()
+
+
+@app.get("/recovery/decision/{session_id}")
+async def recovery_decision(session_id: str, experiment_id: str | None = None):
+    """Why this session was flagged, what it was offered, how it ended."""
+    return explain_decision(session_id, experiment_id, AUDIT_DB)
+
+
 @app.get("/live/status")
 async def live_status():
     """What the simulation is doing, and why, without opening a websocket."""
@@ -143,4 +215,4 @@ if os.path.isdir("visuals"):
 
     @app.get("/")
     async def root():
-        return RedirectResponse(url="/dashboard/dashboard.html")
+        return RedirectResponse(url="/dashboard/recovery.html")

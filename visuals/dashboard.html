@@ -354,18 +354,22 @@
 
     /* ── Budget Sensitivity ── */
     const BudgetPanel = ({ data }) => {
-      const bs = data.budget_sensitivity || {};
+      /* budget_sensitivity became {conversion_by_persona, expected_ordering, verdict}
+         when the metric started measuring a conversion rate per persona rather
+         than an average purchase count. Reading the old flat shape rendered
+         0.00 for every row without erroring. */
+      const bs = (data.budget_sensitivity || {}).conversion_by_persona || {};
       const rows = [['power_buyer','Power Buyers',S.red],['average_buyer','Regular Buyers',S.blue],['browser','Browsers',S.green]];
-      const max = Math.max(...rows.map(([k]) => bs[k] || 0), 0.01);
+      const max = Math.max(...rows.map(([k]) => bs[k] || 0), 0.001);
       return (
         <div style={card()}>
-          <h3 style={{ fontFamily:'monospace', fontSize:'1rem', marginBottom:4 }}>Purchases Per Shopper Type</h3>
-          <p style={{ color:S.dim, fontSize:'0.74rem', marginBottom:18 }}>Higher budget = more purchases</p>
+          <h3 style={{ fontFamily:'monospace', fontSize:'1rem', marginBottom:4 }}>Conversion By Shopper Type</h3>
+          <p style={{ color:S.dim, fontSize:'0.74rem', marginBottom:18 }}>Bigger wallet = more likely to buy</p>
           {rows.map(([k,label,color]) => (
             <div key={k} style={{ marginBottom:14 }}>
               <div style={{ display:'flex', justifyContent:'space-between', marginBottom:5 }}>
                 <span style={{ fontSize:'0.84rem' }}>{label}</span>
-                <span style={{ fontFamily:'monospace', fontSize:'0.84rem', color }}>{(bs[k]||0).toFixed(2)} avg</span>
+                <span style={{ fontFamily:'monospace', fontSize:'0.84rem', color }}>{(((bs[k]||0))*100).toFixed(1)}%</span>
               </div>
               <div style={{ background:S.border, borderRadius:4, height:7, overflow:'hidden' }}>
                 <div style={{ background:color, height:'100%', borderRadius:4, width:`${((bs[k]||0)/max)*100}%`, opacity:0.85 }} />
