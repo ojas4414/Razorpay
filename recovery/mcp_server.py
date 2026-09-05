@@ -88,6 +88,10 @@ def explain_decision(session_id: str, experiment_id=None, db_path=None) -> dict:
                 "evidence": features,
             },
             "offer": offer,
+            # Timestamps the dashboard draws the session timeline from.
+            "dispatched_at_sim": row["dispatched_at_sim"],
+            "applied_at_sim": row["applied_at_sim"],
+            "ended_at_sim": row["ended_at_sim"],
             "idempotency_key": row["idempotency_key"],
             "outcome": row["outcome"],
             "reason_code": row["reason_code"],
