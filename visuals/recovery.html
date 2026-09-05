@@ -58,7 +58,12 @@ const Header = ({ live }) => (
 );
 
 /* ─── the headline result ─── */
-const Result = ({ ab, aa }) => {
+const Result = ({ ab, aa, rob }) => {
+  /* The pooled multi-seed figure is the headline. A single experiment overstates
+     it -- seed 42 came in at +2.82% against a pooled +1.57% -- so when the
+     pooled result is available the page shows that and labels the single run as
+     one draw. */
+  if (rob?.ab?.pooled) return <PooledResult rob={rob} />;
   if (!ab?.found) return (
     <div style={card()}>
       <p style={{ color:S.dim }}>No experiment in the audit trail yet. Run
@@ -99,6 +104,58 @@ const Result = ({ ab, aa }) => {
         The <strong style={{color:S.purple}}>A/A check</strong> runs the same detector, the same
         arm assignment and the same scheduling with <em>nothing applied</em>. It must come back
         null — that is what separates a measurement from an artefact of the machinery.
+      </p>
+    </div>
+  );
+};
+
+const PooledResult = ({ rob }) => {
+  const ab = rob.ab, aa = rob.aa;
+  const p = ab.pooled, a = aa.pooled;
+  const boot = ab.bootstrap_ci || [];
+  return (
+    <div style={card()}>
+      <div style={{ display:'flex', justifyContent:'space-between',
+                    alignItems:'baseline', flexWrap:'wrap', gap:8 }}>
+        <h3 style={{ fontSize:'1rem' }}>Did the intervention work?</h3>
+        <span style={{ ...mono, fontSize:'0.7rem', color:S.dim }}>
+          pooled over {ab.seeds} seeds &middot; {rob.sessions_per_seed?.toLocaleString?.() || ''} sessions each
+        </span>
+      </div>
+
+      <div style={{ display:'flex', gap:28, marginTop:18, flexWrap:'wrap' }}>
+        <Stat label="treatment" value={pct(p.treat_rate)} sub={`n=${p.treat_n}`}
+              color={S.green} big />
+        <Stat label="control" value={pct(p.control_rate)} sub={`n=${p.control_n}`}
+              color={S.dim} big />
+        <Stat label="difference"
+              value={`${p.delta >= 0 ? '+' : ''}${pct(p.delta)}`}
+              sub={`95% CI ${pct(p.ci_low)} → ${pct(p.ci_high)}`}
+              color={p.significant ? S.green : S.amber} big />
+      </div>
+
+      <CIBar low={p.ci_low} high={p.ci_high} delta={p.delta} />
+
+      <div style={{ display:'flex', gap:10, marginTop:16, flexWrap:'wrap' }}>
+        <Badge ok={p.significant}
+               text={p.significant ? `SIGNIFICANT  z=${p.z}` : `not significant  z=${p.z}`} />
+        <Badge ok={!a.significant}
+               text={`A/A null  ${a.delta >= 0 ? '+' : ''}${pct(a.delta)}  z=${a.z}`} />
+        <Badge ok={null} text={`${ab.seeds_positive} of ${ab.seeds} seeds positive`} />
+        {boot.length === 2 && (
+          <Badge ok={null}
+                 text={`bootstrap ${pct(boot[0])} → ${pct(boot[1])}`} />
+        )}
+      </div>
+
+      <p style={{ color:S.dim, fontSize:'0.76rem', marginTop:14, lineHeight:1.6 }}>
+        Pooled across seeds on purpose. A single 5,000-session run carries a
+        standard deviation near 1.7 points, so one run measures the seed as much
+        as the effect — four earlier claims in this project were withdrawn for
+        exactly that reason. The <strong style={{color:S.purple}}>A/A check</strong>
+        runs the same machinery with nothing applied and must come back null;
+        {' '}{aa.seeds_positive} of {aa.seeds} seeds came out positive, which is
+        the coin-flip you want from noise.
       </p>
     </div>
   );
@@ -738,9 +795,11 @@ const App = () => {
   const [live, setLive] = useState(false);
   const [grid, setGrid] = useState(null);
   const [building, setBuilding] = useState(false);
+  const [rob, setRob] = useState(null);
 
   useEffect(() => {
     const j = (u) => fetch(u).then(r => r.json()).catch(() => null);
+    j('/recovery/robustness').then(r => setRob(r && r.available === false ? null : r));
     j('/recovery/experiments').then(list => {
       if (!list?.experiments?.length) return;
       const abId = (list.experiments.find(e => e.experiment_id.startsWith('ab-'))
@@ -794,7 +853,7 @@ const App = () => {
     <div style={{ maxWidth:1240, margin:'0 auto', padding:'32px 24px 64px' }}>
       <Header live={live} />
       <div style={{ display:'grid', gap:20 }}>
-        <Result ab={ab} aa={aa} />
+        <Result ab={ab} aa={aa} rob={rob} />
         <Lab grid={grid} building={building} />
         <div style={{ display:'grid', gap:20, gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))' }}>
           <BreakEven grid={grid} building={building} />
