@@ -74,10 +74,15 @@ class InterventionPolicy:
     # only where the expected lift beats the expected discount bill. Narrowing by
     # trigger can only pick whole categories; this can pick sessions.
     eligible: object | None = None
+    # Kill switch and spend caps (recovery/safety.py). Checked last, so a
+    # refusal here is recorded as a safety refusal rather than being confused
+    # with the model declining to treat.
+    safety: object | None = None
     _issued: dict = field(default_factory=dict)
     duplicates_refused: int = 0
     missed: int = 0
     ineligible: int = 0
+    refused_by_safety: int = 0
 
     @staticmethod
     def idempotency_key(session_id: str, kind: str = "discount") -> str:
@@ -105,6 +110,12 @@ class InterventionPolicy:
             self.ineligible += 1
             return None
 
+        if self.safety is not None:
+            refusal = self.safety.allow(session.cart_value, self.discount_rate)
+            if refusal is not None:
+                self.refused_by_safety += 1
+                return None
+
         intervention = Intervention(
             session_id=session.session_id,
             kind="discount",
@@ -115,6 +126,8 @@ class InterventionPolicy:
         )
         self._issued[key] = intervention
         session.intervention = intervention
+        if self.safety is not None:
+            self.safety.issued(session.cart_value, self.discount_rate)
         return intervention
 
     def apply(self, session, now: float) -> bool:
@@ -149,6 +162,7 @@ class InterventionPolicy:
             "missed": self.missed,
             "duplicates_refused": self.duplicates_refused,
             "ineligible": self.ineligible,
+            "refused_by_safety": self.refused_by_safety,
             "discount_rate": self.discount_rate,
             "dispatch_latency": self.dispatch_latency,
         }
