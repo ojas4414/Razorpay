@@ -70,6 +70,10 @@ class InterventionPolicy:
     # capable of doing anything: a session flagged for hesitation or churn was
     # not leaving over price, so a price offer cannot move it however large.
     eligible_triggers: frozenset | None = None
+    # An optional predicate over the session, used for uplift targeting: treat
+    # only where the expected lift beats the expected discount bill. Narrowing by
+    # trigger can only pick whole categories; this can pick sessions.
+    eligible: object | None = None
     _issued: dict = field(default_factory=dict)
     duplicates_refused: int = 0
     missed: int = 0
@@ -96,6 +100,10 @@ class InterventionPolicy:
             if trigger not in self.eligible_triggers:
                 self.ineligible += 1
                 return None
+
+        if self.eligible is not None and not self.eligible(session):
+            self.ineligible += 1
+            return None
 
         intervention = Intervention(
             session_id=session.session_id,
