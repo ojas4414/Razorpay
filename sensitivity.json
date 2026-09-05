@@ -1,0 +1,124 @@
+{
+  "baseline": {
+    "delta": 0.031031220435193945,
+    "z": 1.3780781269167788,
+    "treat_n": 151,
+    "control_n": 175
+  },
+  "perturbation": 0.2,
+  "sessions": 5000,
+  "workers": 8,
+  "parameters": [
+    {
+      "parameter": "core.friction.B_INTENT",
+      "label": "intent weight",
+      "baseline_value": 2.3,
+      "low_delta": 0.05295,
+      "high_delta": -0.02458,
+      "low_z": 1.706,
+      "high_z": -1.146,
+      "swing": 0.07753,
+      "sign_holds": false
+    },
+    {
+      "parameter": "core.cart.SHIPPING_FLAT",
+      "label": "flat shipping fee",
+      "baseline_value": 70.0,
+      "low_delta": 0.00885,
+      "high_delta": 0.06882,
+      "low_z": 0.319,
+      "high_z": 2.153,
+      "swing": 0.05997,
+      "sign_holds": true
+    },
+    {
+      "parameter": "core.friction.RESERVATION_SOFTNESS",
+      "label": "reservation band width",
+      "baseline_value": 0.18,
+      "low_delta": 0.02773,
+      "high_delta": -0.00978,
+      "low_z": 1.298,
+      "high_z": -0.467,
+      "swing": 0.03751,
+      "sign_holds": false
+    },
+    {
+      "parameter": "core.friction.CHECKOUT_INTENT",
+      "label": "willingness to reach checkout",
+      "baseline_value": 0.72,
+      "low_delta": -0.02892,
+      "high_delta": 0.00834,
+      "low_z": -1.467,
+      "high_z": 0.283,
+      "swing": 0.03726,
+      "sign_holds": false
+    },
+    {
+      "parameter": "core.cart.TAX_RATE",
+      "label": "tax rate",
+      "baseline_value": 0.08,
+      "low_delta": 0.0256,
+      "high_delta": 0.05248,
+      "low_z": 0.817,
+      "high_z": 1.921,
+      "swing": 0.02688,
+      "sign_holds": true
+    },
+    {
+      "parameter": "live.engine.BUDGET_WEIGHT",
+      "label": "budget awareness when picking products",
+      "baseline_value": 2.5,
+      "low_delta": 0.04365,
+      "high_delta": 0.01921,
+      "low_z": 2.2,
+      "high_z": 0.804,
+      "swing": 0.02445,
+      "sign_holds": true
+    },
+    {
+      "parameter": "core.friction.B_DWELL",
+      "label": "hesitation weight",
+      "baseline_value": 0.28,
+      "low_delta": 0.01067,
+      "high_delta": 0.03436,
+      "low_z": 0.382,
+      "high_z": 1.344,
+      "swing": 0.02368,
+      "sign_holds": true
+    },
+    {
+      "parameter": "core.friction.B_PRICE",
+      "label": "price weight in the hazard",
+      "baseline_value": 3.2,
+      "low_delta": 0.01273,
+      "high_delta": -0.00131,
+      "low_z": 0.698,
+      "high_z": -0.057,
+      "swing": 0.01403,
+      "sign_holds": false
+    },
+    {
+      "parameter": "core.friction.B0",
+      "label": "baseline reluctance to quit",
+      "baseline_value": -1.8,
+      "low_delta": -0.01442,
+      "high_delta": -0.00059,
+      "low_z": -0.479,
+      "high_z": -0.026,
+      "swing": 0.01382,
+      "sign_holds": false
+    },
+    {
+      "parameter": "core.friction.B_REVISIT",
+      "label": "churn weight",
+      "baseline_value": 0.16,
+      "low_delta": 0.01326,
+      "high_delta": 0.01941,
+      "low_z": 0.488,
+      "high_z": 0.593,
+      "swing": 0.00615,
+      "sign_holds": true
+    }
+  ],
+  "robust": false
+}

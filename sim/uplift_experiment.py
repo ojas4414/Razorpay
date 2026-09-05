@@ -45,6 +45,11 @@ from sim.run import run_sessions
 
 CALIBRATION_SEED = 7
 TRAIN_SEED = 21
+# Several held-out seeds, pooled. A single run at this size has a standard
+# deviation near 1.7 percentage points, so comparing two policies on one seed
+# each measures the seeds rather than the policies -- which is what the first
+# version of this comparison ended up doing.
+EVAL_SEEDS = (42, 101, 202, 303, 404)
 EVAL_SEED = 42
 DEFAULT_SESSIONS = 8000
 DISCOUNT = 0.15
@@ -55,8 +60,20 @@ def audit_rows(sessions, experiment_id):
     return [to_row(s, experiment_id) for s in sessions if s.flag is not None]
 
 
-def evaluate(sessions, discount):
+def evaluate(sessions, discount, selector=None):
+    """Compare arms over the population the policy would act on.
+
+    ``selector`` must be applied to *both* arms. Without it the treatment arm
+    contains sessions the policy declined to treat while the control arm
+    contains everyone, so the comparison is between different populations and
+    the effect is diluted by whatever share went untreated. This is the same
+    like-for-like failure that made price-shock targeting look like +6.17% when
+    it was +0.89%; it reappeared here because the eligibility predicate filters
+    who gets an offer but not who is counted.
+    """
     flagged = [s for s in sessions if s.flag]
+    if selector is not None:
+        flagged = [s for s in flagged if selector(s)]
     treated = [s for s in flagged if s.arm == TREATMENT]
     control = [s for s in flagged if s.arm == CONTROL]
     converted = lambda g: sum(1 for s in g if s.outcome == Outcome.CONVERTED)
@@ -74,6 +91,65 @@ def evaluate(sessions, discount):
         "offers_that_could_matter": useful,
         "offer_precision": useful / len(offered) if offered else 0.0,
     }
+
+
+def measure_policy(thresholds, model, discount, n_sessions, seeds,
+                   targeted, selector):
+    """Run one policy across several seeds and pool the arms.
+
+    Both arms are restricted to ``selector`` -- the population the policy would
+    act on -- because filtering only the treated side compares different
+    populations and dilutes the effect by whatever share went untreated.
+    """
+    treat_hits = treat_n = control_hits = control_n = 0
+    offers = useful = 0
+    gross = cost = 0.0
+
+    for seed in seeds:
+        policy = InterventionPolicy(
+            discount_rate=discount, dispatch_latency=LATENCY,
+            eligible=(lambda s: model.should_treat(s.flag.features, discount))
+            if targeted else None,
+        )
+        sim, _ = run_sessions(n_sessions, seed, detector=Detector(thresholds),
+                              interventions=policy, budget_aware=True)
+        result = evaluate(sim.sessions, discount, selector=selector)
+        test = result["test"]
+        treat_hits += test.treat_hits
+        treat_n += test.treat_n
+        control_hits += test.control_hits
+        control_n += test.control_n
+        offers += result["offers"]
+        useful += result["offers_that_could_matter"]
+        gross += result["margin"].gross_recovered
+        cost += result["margin"].discount_cost
+        sim.sessions.clear()
+
+    return {
+        "test": ProportionTest(treat_hits, treat_n, control_hits, control_n),
+        "offers": offers,
+        "offers_that_could_matter": useful,
+        "offer_precision": useful / offers if offers else 0.0,
+        "gross": round(gross, 2),
+        "cost": round(cost, 2),
+        "net": round(gross - cost, 2),
+        "flagged": treat_n + control_n,
+    }
+
+
+def report_pooled(label, pooled):
+    test = pooled["test"]
+    print(f"\n  {label}")
+    print(f"    offers issued            {pooled['offers']:>8,}")
+    print(f"    offers that could matter {pooled['offers_that_could_matter']:>8,}   "
+          f"({pooled['offer_precision']:.1%})")
+    print(f"    conversion delta         {test.delta:>+8.2%}   "
+          f"({'sig' if test.significant else 'not sig'}, z={test.z:+.2f}, "
+          f"n={test.treat_n}/{test.control_n})")
+    low, high = test.confidence_interval
+    print(f"    95% CI                   {low:>+8.2%} to {high:+.2%}")
+    print(f"    NET                      {pooled['net']:>12,.2f}   "
+          f"{'positive' if pooled['net'] > 0 else 'NEGATIVE'}")
 
 
 def report(label, result):
@@ -117,36 +193,46 @@ def main():
     model = UpliftModel.train(training)
     print(f"  model fitted on {model.trained_on:,} rows")
 
-    print(f"\nHeld-out seed {EVAL_SEED}: baseline (treat all flagged)...")
-    base_sim, _ = run_sessions(
-        args.sessions, EVAL_SEED, detector=Detector(thresholds),
-        interventions=InterventionPolicy(discount_rate=args.discount,
-                                         dispatch_latency=LATENCY),
-        budget_aware=True)
-    baseline = evaluate(base_sim.sessions, args.discount)
+    selector = lambda s: model.should_treat(s.flag.features, args.discount)
+    seeds = EVAL_SEEDS
 
-    print(f"Held-out seed {EVAL_SEED}: uplift targeting...")
-    targeted_policy = InterventionPolicy(
-        discount_rate=args.discount, dispatch_latency=LATENCY,
-        eligible=lambda s: model.should_treat(s.flag.features, args.discount),
-    )
-    uplift_sim, _ = run_sessions(
-        args.sessions, EVAL_SEED, detector=Detector(thresholds),
-        interventions=targeted_policy, budget_aware=True)
-    targeted = evaluate(uplift_sim.sessions, args.discount)
+    print(f"\nHeld-out seeds {seeds}: treat everyone flagged...")
+    baseline = measure_policy(thresholds, model, args.discount, args.sessions,
+                              seeds, targeted=False, selector=None)
+
+    print("Same seeds, restricted to the population uplift would pick...")
+    baseline_on_selected = measure_policy(thresholds, model, args.discount,
+                                          args.sessions, seeds, targeted=False,
+                                          selector=selector)
+
+    print("Same seeds, uplift targeting...")
+    targeted = measure_policy(thresholds, model, args.discount, args.sessions,
+                              seeds, targeted=True, selector=selector)
 
     print("\n" + "=" * 64)
-    report("baseline — treat every flagged session", baseline)
-    report("uplift — treat only where lift beats the bill", targeted)
+    report_pooled("treat every flagged session", baseline)
+    report_pooled("treat all of the population uplift picks "
+                  "(the like-for-like control)", baseline_on_selected)
+    report_pooled("uplift targeting", targeted)
 
     saved = baseline["offers"] - targeted["offers"]
-    net_change = targeted["margin"].net - baseline["margin"].net
+    net_change = targeted["net"] - baseline_on_selected["net"]
     print("\n  " + "-" * 60)
-    print(f"    offers avoided           {saved:>8,}   "
-          f"({saved / baseline['offers']:.0%} fewer)" if baseline["offers"] else "")
-    print(f"    change in net margin     {net_change:>+12,.2f}")
-    print(f"    offer precision          {baseline['offer_precision']:.1%} "
+    print(f"    offers avoided vs treat-all   {saved:>8,}")
+    print(f"    net vs like-for-like control  {net_change:>+12,.2f}")
+    print(f"    offer precision               {baseline['offer_precision']:.1%} "
           f"-> {targeted['offer_precision']:.1%}")
+    verdict = ("uplift beats treating everyone"
+               if targeted["net"] > baseline_on_selected["net"]
+               else "uplift does NOT beat treating everyone")
+    print(f"    verdict                       {verdict}")
+
+    base_sim, _ = run_sessions(args.sessions, seeds[0],
+                               detector=Detector(thresholds),
+                               interventions=InterventionPolicy(
+                                   discount_rate=args.discount,
+                                   dispatch_latency=LATENCY),
+                               budget_aware=True)
 
     truth = ground_truth_precision(model, audit_rows(base_sim.sessions, "eval"))
     if truth:
@@ -162,16 +248,16 @@ def main():
     print("=" * 64)
 
     curve = qini_curve(model, audit_rows(base_sim.sessions, "eval"))
+    flat = lambda p: {"offers": p["offers"], **p["test"].summary(),
+                      "net": p["net"], "gross": p["gross"], "cost": p["cost"],
+                      "offer_precision": round(p["offer_precision"], 4)}
     payload = {
         "sessions": args.sessions, "discount": args.discount,
-        "baseline": {"offers": baseline["offers"],
-                     **baseline["test"].summary(),
-                     "margin": baseline["margin"].summary(),
-                     "offer_precision": round(baseline["offer_precision"], 4)},
-        "uplift": {"offers": targeted["offers"],
-                   **targeted["test"].summary(),
-                   "margin": targeted["margin"].summary(),
-                   "offer_precision": round(targeted["offer_precision"], 4)},
+        "seeds": list(seeds),
+        "baseline": flat(baseline),
+        "baseline_on_selected": flat(baseline_on_selected),
+        "uplift": flat(targeted),
+        "uplift_beats_baseline": targeted["net"] > baseline_on_selected["net"],
         "offers_avoided": saved,
         "net_margin_change": round(net_change, 2),
         "ground_truth": truth,

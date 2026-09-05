@@ -1,0 +1,134 @@
+{
+  "sessions": 6000,
+  "worlds": [
+    {
+      "world": "home",
+      "overrides": {},
+      "transferred": {
+        "precision": 0.9481132075471698,
+        "recall": 0.5167095115681234,
+        "lift": 1.2856805063782315,
+        "base_rate": 0.7374407582938388,
+        "flagged": 424,
+        "cart_sessions": 1055,
+        "f1": 0.6688851913477537
+      },
+      "native": {
+        "precision": 0.9481132075471698,
+        "recall": 0.5167095115681234,
+        "lift": 1.2856805063782315,
+        "base_rate": 0.7374407582938388,
+        "flagged": 424,
+        "cart_sessions": 1055,
+        "f1": 0.6688851913477537
+      },
+      "lift_loss": 0.0
+    },
+    {
+      "world": "price_sensitive",
+      "overrides": {
+        "friction.B_PRICE": 5.0,
+        "friction.RESERVATION_SOFTNESS": 0.1
+      },
+      "transferred": {
+        "precision": 0.9654178674351584,
+        "recall": 0.46206896551724136,
+        "lift": 1.3262844082281626,
+        "base_rate": 0.7279116465863453,
+        "flagged": 347,
+        "cart_sessions": 996,
+        "f1": 0.625
+      },
+      "native": {
+        "precision": 0.96045197740113,
+        "recall": 0.4689655172413793,
+        "lift": 1.3194623027469317,
+        "base_rate": 0.7279116465863453,
+        "flagged": 354,
+        "cart_sessions": 996,
+        "f1": 0.6302131603336423
+      },
+      "lift_loss": -0.0068
+    },
+    {
+      "world": "patient_shoppers",
+      "overrides": {
+        "friction.B_DWELL": 0.1,
+        "friction.B_REVISIT": 0.06,
+        "friction.B0": -2.4
+      },
+      "transferred": {
+        "precision": 0.9581749049429658,
+        "recall": 0.504,
+        "lift": 1.3002433460076046,
+        "base_rate": 0.7369196757553427,
+        "flagged": 526,
+        "cart_sessions": 1357,
+        "f1": 0.6605504587155963
+      },
+      "native": {
+        "precision": 0.9566037735849057,
+        "recall": 0.507,
+        "lift": 1.298111320754717,
+        "base_rate": 0.7369196757553427,
+        "flagged": 530,
+        "cart_sessions": 1357,
+        "f1": 0.6627450980392157
+      },
+      "lift_loss": -0.0021
+    },
+    {
+      "world": "expensive_delivery",
+      "overrides": {
+        "cart.SHIPPING_FLAT": 140.0,
+        "cart.TAX_RATE": 0.18
+      },
+      "transferred": {
+        "precision": 0.989159891598916,
+        "recall": 0.4087346024636058,
+        "lift": 1.114327940591836,
+        "base_rate": 0.8876739562624254,
+        "flagged": 369,
+        "cart_sessions": 1006,
+        "f1": 0.5784469096671949
+      },
+      "native": {
+        "precision": 0.9893617021276596,
+        "recall": 0.4165733482642777,
+        "lift": 1.1145552881751686,
+        "base_rate": 0.8876739562624254,
+        "flagged": 376,
+        "cart_sessions": 1006,
+        "f1": 0.5862884160756502
+      },
+      "lift_loss": 0.0002
+    },
+    {
+      "world": "impulsive",
+      "overrides": {
+        "friction.CHECKOUT_INTENT": 0.9,
+        "friction.B_INTENT": 1.4
+      },
+      "transferred": {
+        "precision": 0.9512195121951219,
+        "recall": 0.4090909090909091,
+        "lift": 1.332039911308204,
+        "base_rate": 0.714107365792759,
+        "flagged": 246,
+        "cart_sessions": 801,
+        "f1": 0.5721271393643031
+      },
+      "native": {
+        "precision": 0.9673469387755103,
+        "recall": 0.4143356643356643,
+        "lift": 1.3546239474810904,
+        "base_rate": 0.714107365792759,
+        "flagged": 245,
+        "cart_sessions": 801,
+        "f1": 0.5801713586291309
+      },
+      "lift_loss": 0.0226
+    }
+  ],
+  "transfers": true
+}

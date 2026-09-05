@@ -136,7 +136,7 @@ def main():
     home_thresholds = calibrate_in_world(args.sessions, HOME_SEED)
     print(f"  {home_thresholds.describe()}\n")
 
-    print(f"{'world':<20} {'lift(home θ)':>13} {'lift(native θ)':>15} "
+    print(f"{'world':<20} {'lift(home thr)':>13} {'lift(native thr)':>15} "
           f"{'loss':>8} {'base':>7}")
     rows = []
     for name, overrides in WORLDS.items():
