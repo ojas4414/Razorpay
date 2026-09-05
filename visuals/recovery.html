@@ -222,6 +222,211 @@ const Drivers = ({ d }) => {
   );
 };
 
+
+/* ─── nearest measured point in the precomputed sweep ─── */
+const nearest = (rows, key, value) =>
+  (rows || []).reduce((best, r) =>
+    (best == null || Math.abs(r[key]-value) < Math.abs(best[key]-value)) ? r : best, null);
+
+/* ─── the lab: change the offer, see what it does ─── */
+const Lab = ({ grid }) => {
+  const [discount, setDiscount] = useState(0.15);
+  const [latency, setLatency]   = useState(0.5);
+  const [job, setJob]           = useState(null);
+  const [live, setLive]         = useState(null);
+  const poll = useRef(null);
+
+  const dRow = nearest(grid?.by_discount, 'discount', discount);
+  const lRow = nearest(grid?.by_latency, 'latency', latency);
+  /* The discount sweep is the one that moves margin; latency mostly changes how
+     many offers land in time, so it is reported separately rather than blended. */
+  const shown = live || dRow;
+
+  useEffect(() => () => poll.current && clearInterval(poll.current), []);
+
+  const runLive = () => {
+    setLive(null);
+    fetch('/recovery/counterfactual', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ discount, latency, sessions: 3000 }),
+    }).then(r => r.json()).then(res => {
+      if (!res.accepted) { setJob({ status:'refused', error:res.reason }); return; }
+      setJob({ status:'running', job_id:res.job_id, elapsed:0 });
+      poll.current = setInterval(() => {
+        fetch(`/recovery/counterfactual/${res.job_id}`).then(r => r.json()).then(j => {
+          setJob(j);
+          if (j.status === 'done' || j.status === 'error') {
+            clearInterval(poll.current);
+            if (j.status === 'done' && j.result) {
+              setLive({ ...j.result.test, margin:j.result.margin, measured:true });
+            }
+          }
+        }).catch(()=>{});
+      }, 1500);
+    }).catch(() => setJob({ status:'error', error:'could not reach the gateway' }));
+  };
+
+  const Slider = ({ label, value, min, max, step, fmt, onChange, note }) => (
+    <div style={{ flex:'1 1 220px' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', marginBottom:6 }}>
+        <span style={{ fontSize:'0.8rem' }}>{label}</span>
+        <span style={{ ...mono, color:S.blue, fontSize:'0.85rem' }}>{fmt(value)}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value}
+             onChange={e => { setLive(null); onChange(parseFloat(e.target.value)); }}
+             style={{ width:'100%', accentColor:S.blue }} />
+      <div style={{ color:S.dim, fontSize:'0.68rem', marginTop:3 }}>{note}</div>
+    </div>
+  );
+
+  return (
+    <div style={card()}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline',
+                    flexWrap:'wrap', gap:8 }}>
+        <h3 style={{ fontSize:'1rem' }}>Change the offer</h3>
+        <span style={{ ...mono, fontSize:'0.7rem', color:S.dim }}>
+          {live ? 'measured just now' : grid?.sessions_per_cell
+            ? `precomputed · ${grid.sessions_per_cell.toLocaleString()} sessions per point`
+            : 'precomputed sweep unavailable'}
+        </span>
+      </div>
+
+      <div style={{ display:'flex', gap:24, marginTop:16, flexWrap:'wrap' }}>
+        <Slider label="discount" value={discount} min={0.05} max={0.50} step={0.05}
+                fmt={v => `${(v*100).toFixed(0)}%`} onChange={setDiscount}
+                note="how much comes off the basket" />
+        <Slider label="dispatch latency" value={latency} min={0.5} max={6} step={0.5}
+                fmt={v => `${v.toFixed(1)}s`} onChange={setLatency}
+                note="delay before the offer lands" />
+      </div>
+
+      {shown ? (
+        <div style={{ marginTop:20 }}>
+          <div style={{ display:'flex', gap:26, flexWrap:'wrap' }}>
+            <Stat label="effect" value={`${shown.delta>=0?'+':''}${pct(shown.delta)}`}
+                  sub={`95% CI ${pct(shown.ci_low)} → ${pct(shown.ci_high)}`}
+                  color={shown.significant ? S.green : S.amber} big />
+            <Stat label="net margin" value={money(shown.margin?.net)}
+                  sub={shown.margin?.margin_positive ? 'pays for itself' : 'loses money'}
+                  color={shown.margin?.margin_positive ? S.green : S.red} big />
+            <Stat label="offers landing late"
+                  value={lRow && lRow.issued ? `${Math.round(100*lRow.missed/lRow.issued)}%` : '—'}
+                  sub={`at ${latency.toFixed(1)}s dispatch`} color={S.dim} />
+          </div>
+          <CIBar low={shown.ci_low} high={shown.ci_high} delta={shown.delta} />
+        </div>
+      ) : (
+        <p style={{ color:S.dim, fontSize:'0.8rem', marginTop:18 }}>
+          Run <code style={{ ...mono, color:S.blue }}>python -m sim.precompute_grid</code> to
+          populate the sweep.
+        </p>
+      )}
+
+      <div style={{ display:'flex', gap:12, alignItems:'center', marginTop:18,
+                    flexWrap:'wrap' }}>
+        <button onClick={runLive} disabled={job?.status === 'running'}
+                style={{ background: job?.status==='running' ? S.border : S.blue,
+                         color: job?.status==='running' ? S.dim : '#0F0F0F',
+                         border:'none', borderRadius:8, padding:'10px 18px',
+                         fontSize:'0.84rem', fontWeight:600,
+                         cursor: job?.status==='running' ? 'default' : 'pointer' }}>
+          {job?.status === 'running' ? 'measuring…' : 'Measure this for real'}
+        </button>
+        {job?.status === 'running' && (
+          <span style={{ ...mono, fontSize:'0.75rem', color:S.dim }}>
+            running a fresh experiment · {job.elapsed_seconds ?? 0}s
+          </span>
+        )}
+        {job?.status === 'refused' && (
+          <span style={{ ...mono, fontSize:'0.75rem', color:S.amber }}>{job.error}</span>
+        )}
+        {job?.status === 'error' && (
+          <span style={{ ...mono, fontSize:'0.75rem', color:S.red }}>{job.error}</span>
+        )}
+        {live && (
+          <span style={{ ...mono, fontSize:'0.75rem', color:S.green }}>
+            measured live · n={live.treat_n}/{live.control_n}
+          </span>
+        )}
+      </div>
+      <p style={{ color:S.dim, fontSize:'0.72rem', marginTop:12, lineHeight:1.6 }}>
+        Every point here is a real experiment — arms randomised at flag time,
+        thresholds calibrated on a held-out seed. Nothing is interpolated.
+      </p>
+    </div>
+  );
+};
+
+/* ─── where the programme stops paying for itself ─── */
+const BreakEven = ({ grid }) => {
+  const rows = grid?.by_discount;
+  if (!rows?.length) return null;
+
+  const W = 520, H = 220, P = { l:56, r:16, t:16, b:34 };
+  const xs = rows.map(r => r.discount);
+  const ys = rows.map(r => r.margin.net);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const yMin = Math.min(0, ...ys), yMax = Math.max(0, ...ys);
+  const x = v => P.l + ((v - xMin)/(xMax - xMin || 1)) * (W - P.l - P.r);
+  const y = v => H - P.b - ((v - yMin)/((yMax - yMin) || 1)) * (H - P.t - P.b);
+  const path = rows.map((r,i) => `${i?'L':'M'}${x(r.discount)},${y(r.margin.net)}`).join(' ');
+  const be = grid.break_even_discount;
+
+  return (
+    <div style={card()}>
+      <h3 style={{ fontSize:'1rem' }}>Where it stops paying for itself</h3>
+      <p style={{ color:S.dim, fontSize:'0.76rem', marginTop:6, marginBottom:12,
+                  lineHeight:1.6 }}>
+        Net margin against discount rate. A bigger offer recovers more carts and
+        costs more on every conversion it touches — including the ones that never
+        needed it. The crossing is the number a payments team actually needs.
+      </p>
+      <div style={{ overflowX:'auto' }}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width:'100%', minWidth:420 }}>
+          <line x1={P.l} x2={W-P.r} y1={y(0)} y2={y(0)}
+                stroke={S.dim} strokeWidth="1" strokeDasharray="4 4" opacity="0.6" />
+          <text x={P.l-8} y={y(0)+4} textAnchor="end" fill={S.dim}
+                style={{ ...mono, fontSize:10 }}>0</text>
+          {be != null && (
+            <g>
+              <line x1={x(be)} x2={x(be)} y1={P.t} y2={H-P.b}
+                    stroke={S.amber} strokeWidth="1.5" strokeDasharray="3 3" />
+              <text x={x(be)} y={P.t+12} textAnchor="middle" fill={S.amber}
+                    style={{ ...mono, fontSize:11 }}>{(be*100).toFixed(0)}%</text>
+            </g>
+          )}
+          <path d={path} fill="none" stroke={S.green} strokeWidth="2.5"
+                strokeLinejoin="round" />
+          {rows.map(r => (
+            <circle key={r.discount} cx={x(r.discount)} cy={y(r.margin.net)} r="3.5"
+                    fill={r.margin.net >= 0 ? S.green : S.red} />
+          ))}
+          {rows.map(r => (
+            <text key={`x${r.discount}`} x={x(r.discount)} y={H-P.b+16}
+                  textAnchor="middle" fill={S.dim} style={{ ...mono, fontSize:10 }}>
+              {(r.discount*100).toFixed(0)}%
+            </text>
+          ))}
+          <text x={P.l-8} y={y(yMax)+4} textAnchor="end" fill={S.dim}
+                style={{ ...mono, fontSize:10 }}>{Math.round(yMax).toLocaleString()}</text>
+          <text x={P.l-8} y={y(yMin)+4} textAnchor="end" fill={S.dim}
+                style={{ ...mono, fontSize:10 }}>{Math.round(yMin).toLocaleString()}</text>
+        </svg>
+      </div>
+      {be != null ? (
+        <p style={{ fontSize:'0.82rem', marginTop:8 }}>
+          Break-even at <strong style={{ color:S.amber }}>{(be*100).toFixed(1)}%</strong>.
+          Beyond it the programme still recovers carts and still loses money.
+        </p>
+      ) : (
+        <p style={{ color:S.dim, fontSize:'0.8rem', marginTop:8 }}>
+          Net margin does not cross zero anywhere in the swept range.
+        </p>
+      )}
+    </div>
+  );
+};
+
 /* ─── audit trail ─── */
 const Audit = ({ decisions, onPick, picked }) => (
   <div style={card({ padding:0, overflow:'hidden' })}>
@@ -373,9 +578,11 @@ const App = () => {
   const [events, setEvents] = useState([]);
   const [stats, setStats] = useState({});
   const [live, setLive] = useState(false);
+  const [grid, setGrid] = useState(null);
 
   useEffect(() => {
     const j = (u) => fetch(u).then(r => r.json()).catch(() => null);
+    j('/recovery/grid').then(g => setGrid(g && g.available === false ? null : g));
     j('/recovery/experiments').then(list => {
       if (!list?.experiments?.length) return;
       const abId = (list.experiments.find(e => e.experiment_id.startsWith('ab-'))
@@ -414,10 +621,12 @@ const App = () => {
       <Header live={live} />
       <div style={{ display:'grid', gap:20 }}>
         <Result ab={ab} aa={aa} />
+        <Lab grid={grid} />
         <div style={{ display:'grid', gap:20, gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))' }}>
+          <BreakEven grid={grid} />
           <Margin ab={ab} />
-          <Drivers d={drivers} />
         </div>
+        <Drivers d={drivers} />
         <div style={{ display:'grid', gap:20, gridTemplateColumns:'repeat(auto-fit,minmax(340px,1fr))' }}>
           <Audit decisions={decisions} onPick={setPicked} picked={picked} />
           <Explain detail={detail} />

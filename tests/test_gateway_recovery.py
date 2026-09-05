@@ -140,3 +140,70 @@ class TestStaticPages:
         response = client.get("/", follow_redirects=False)
         assert response.status_code in (302, 307)
         assert "recovery.html" in response.headers["location"]
+
+
+class TestGridEndpoint:
+    def test_missing_grid_is_reported_not_500(self, client, monkeypatch):
+        import backend.gateway.main as gateway
+
+        monkeypatch.setattr(gateway, "GRID_PATH", "does/not/exist.json")
+        body = client.get("/recovery/grid").json()
+        assert body["available"] is False
+        assert "precompute_grid" in body["message"]
+
+    def test_serves_the_sweep_when_present(self, client, monkeypatch, tmp_path):
+        import json
+
+        import backend.gateway.main as gateway
+
+        grid = tmp_path / "grid.json"
+        grid.write_text(json.dumps({
+            "sessions_per_cell": 5000,
+            "break_even_discount": 0.22,
+            "by_discount": [{"discount": 0.15, "delta": 0.03,
+                             "margin": {"net": 100.0, "margin_positive": True}}],
+            "by_latency": [{"latency": 0.5, "issued": 10, "missed": 1}],
+        }), encoding="utf-8")
+        monkeypatch.setattr(gateway, "GRID_PATH", str(grid))
+        body = client.get("/recovery/grid").json()
+        assert body["break_even_discount"] == 0.22
+        assert body["by_discount"][0]["discount"] == 0.15
+
+
+class TestCounterfactualEndpoint:
+    def test_rejects_an_impossible_discount(self, client):
+        response = client.post("/recovery/counterfactual", json={"discount": 2.0})
+        assert response.json()["accepted"] is False
+
+    def test_polling_an_unknown_job_is_answered(self, client):
+        assert client.get("/recovery/counterfactual/nope").json()["status"] == "unknown"
+
+    def test_accepts_and_returns_a_job_id(self, client, monkeypatch):
+        """The run itself is faked; the endpoint contract is what is checked."""
+        import subprocess
+
+        class _Done:
+            returncode, stderr, stdout = 0, "", ""
+
+        def fake_run(command, **kwargs):
+            import json as _json
+
+            with open(command[command.index("--out") + 1], "w", encoding="utf-8") as h:
+                _json.dump({"test": {"delta": 0.02}, "margin": {"net": 1.0}}, h)
+            return _Done()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        body = client.post("/recovery/counterfactual",
+                           json={"discount": 0.2, "latency": 1.0, "sessions": 1000}).json()
+        assert body["accepted"] is True
+        assert body["params"]["discount"] == 0.2
+
+        import time
+
+        for _ in range(200):
+            polled = client.get(f"/recovery/counterfactual/{body['job_id']}").json()
+            if polled["status"] != "running":
+                break
+            time.sleep(0.02)
+        assert polled["status"] == "done"
+        assert polled["result"]["test"]["delta"] == 0.02

@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import time
 from contextlib import asynccontextmanager
@@ -12,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from comms.kafka_client import get_producer, publish_event
 from live.runner import LiveRunner
 from recovery.audit import AuditLog
+from recovery.jobs import JobRunner
 from recovery.mcp_server import (
     abandonment_drivers,
     experiment_summary,
@@ -121,6 +123,12 @@ async def post_session_start(request: Request):
 # These serve the same functions the MCP tools call, so the dashboard and an
 # agent asking in words cannot end up reporting different numbers.
 AUDIT_DB = os.environ.get("FF_AUDIT_DB", "recovery_audit.db")
+GRID_PATH = os.environ.get("FF_GRID", "visuals/counterfactual_grid.json")
+
+# Counterfactual runs happen in a subprocess: the simulation reseeds the global
+# RNG, and doing that in-process would reset the stream the live simulation
+# thread is using. See recovery/jobs.py.
+jobs = JobRunner()
 
 
 @app.get("/recovery/experiments")
@@ -181,6 +189,42 @@ async def recovery_decisions(experiment_id: str | None = None, limit: int = 40):
 async def recovery_decision(session_id: str, experiment_id: str | None = None):
     """Why this session was flagged, what it was offered, how it ended."""
     return explain_decision(session_id, experiment_id, AUDIT_DB)
+
+
+@app.get("/recovery/grid")
+async def recovery_grid():
+    """Precomputed discount and latency response curves.
+
+    Every point is a real measured experiment; the file exists so the dashboard
+    sliders can respond instantly instead of waiting tens of seconds per drag.
+    """
+    try:
+        with open(GRID_PATH, encoding="utf-8") as handle:
+            return json.load(handle)
+    except FileNotFoundError:
+        return {"available": False,
+                "message": "run python -m sim.precompute_grid to build it"}
+
+
+@app.post("/recovery/counterfactual")
+async def start_counterfactual(request: Request):
+    """Measure a different offer for real. One run at a time."""
+    body = await request.json()
+    triggers = body.get("triggers")
+    return jobs.submit(
+        discount=float(body.get("discount", 0.15)),
+        latency=float(body.get("latency", 0.5)),
+        sessions=int(body.get("sessions", 3000)),
+        triggers=frozenset(triggers) if triggers else None,
+    )
+
+
+@app.get("/recovery/counterfactual/{job_id}")
+async def poll_counterfactual(job_id: str):
+    job = jobs.get(job_id)
+    if job is None:
+        return {"status": "unknown", "job_id": job_id}
+    return job.summary()
 
 
 @app.get("/live/status")
