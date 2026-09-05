@@ -143,13 +143,28 @@ class TestStaticPages:
 
 
 class TestGridEndpoint:
-    def test_missing_grid_is_reported_not_500(self, client, monkeypatch):
+    def test_missing_grid_starts_a_build_rather_than_instructing_the_user(
+            self, client, monkeypatch, tmp_path):
+        """The page must never tell a person to go and run a command.
+
+        subprocess is faked so the test does not launch a real twelve-cell
+        sweep; what is checked is that the endpoint reports work in progress.
+        """
+        import subprocess
+        import time
+
         import backend.gateway.main as gateway
 
-        monkeypatch.setattr(gateway, "GRID_PATH", "does/not/exist.json")
+        monkeypatch.setattr(subprocess, "run",
+                            lambda *a, **k: type("R", (), {"returncode": 0,
+                                                           "stderr": "",
+                                                           "stdout": ""})())
+        monkeypatch.setattr(gateway, "GRID_PATH", str(tmp_path / "absent.json"))
         body = client.get("/recovery/grid").json()
         assert body["available"] is False
-        assert "precompute_grid" in body["message"]
+        assert body["status"] == "building"
+        assert "message" not in body           # no instruction to the reader
+        time.sleep(0.1)
 
     def test_serves_the_sweep_when_present(self, client, monkeypatch, tmp_path):
         import json

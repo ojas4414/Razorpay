@@ -1,0 +1,136 @@
+{
+  "sessions": 20000,
+  "discount": 0.4,
+  "seeds": [
+    42,
+    101,
+    202,
+    303,
+    404
+  ],
+  "baseline": {
+    "offers": 3359,
+    "treat_rate": 0.0962,
+    "control_rate": 0.042,
+    "treat_n": 3359,
+    "control_n": 3427,
+    "delta": 0.0541,
+    "ci_low": 0.0421,
+    "ci_high": 0.0662,
+    "z": 8.809,
+    "significant": true,
+    "mde": 0.0136,
+    "net": 9279.24,
+    "gross": 39197.72,
+    "cost": 29918.47,
+    "offer_precision": 0.2013
+  },
+  "baseline_on_selected": {
+    "offers": 2421,
+    "treat_rate": 0.1132,
+    "control_rate": 0.0462,
+    "treat_n": 2421,
+    "control_n": 2467,
+    "delta": 0.067,
+    "ci_low": 0.0519,
+    "ci_high": 0.0821,
+    "z": 8.659,
+    "significant": true,
+    "mde": 0.0168,
+    "net": 10667.31,
+    "gross": 35998.47,
+    "cost": 25331.16,
+    "offer_precision": 0.2264
+  },
+  "uplift": {
+    "offers": 2359,
+    "treat_rate": 0.1174,
+    "control_rate": 0.0505,
+    "treat_n": 2359,
+    "control_n": 2436,
+    "delta": 0.0669,
+    "ci_low": 0.0513,
+    "ci_high": 0.0826,
+    "z": 8.379,
+    "significant": true,
+    "mde": 0.0177,
+    "net": 8706.47,
+    "gross": 33955.32,
+    "cost": 25248.85,
+    "offer_precision": 0.231
+  },
+  "uplift_beats_treat_all": false,
+  "uplift_beats_like_for_like": false,
+  "offers_avoided": 1000,
+  "net_margin_change": -1960.84,
+  "ground_truth": {
+    "top_fraction": 0.35,
+    "recoverable_in_top": 0.294,
+    "recoverable_in_rest": 0.0772,
+    "baseline": 0.153,
+    "n_top": 432,
+    "n_rest": 803
+  },
+  "qini": [
+    {
+      "fraction_targeted": 0.1,
+      "n": 131,
+      "uplift": 0.05247,
+      "incremental": 3.36
+    },
+    {
+      "fraction_targeted": 0.2,
+      "n": 262,
+      "uplift": 0.07927,
+      "incremental": 9.67
+    },
+    {
+      "fraction_targeted": 0.3,
+      "n": 393,
+      "uplift": 0.04756,
+      "incremental": 8.75
+    },
+    {
+      "fraction_targeted": 0.4,
+      "n": 524,
+      "uplift": 0.04769,
+      "incremental": 12.21
+    },
+    {
+      "fraction_targeted": 0.5,
+      "n": 655,
+      "uplift": 0.04142,
+      "incremental": 13.25
+    },
+    {
+      "fraction_targeted": 0.6,
+      "n": 786,
+      "uplift": 0.04024,
+      "incremental": 14.73
+    },
+    {
+      "fraction_targeted": 0.7,
+      "n": 917,
+      "uplift": 0.03643,
+      "incremental": 15.63
+    },
+    {
+      "fraction_targeted": 0.8,
+      "n": 1048,
+      "uplift": 0.03353,
+      "incremental": 16.73
+    },
+    {
+      "fraction_targeted": 0.9,
+      "n": 1179,
+      "uplift": 0.03278,
+      "incremental": 18.49
+    },
+    {
+      "fraction_targeted": 1.0,
+      "n": 1310,
+      "uplift": 0.02831,
+      "incremental": 17.55
+    }
+  ]
+}

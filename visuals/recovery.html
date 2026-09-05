@@ -391,8 +391,10 @@ const BreakEven = ({ grid, building }) => {
   const W = 520, H = 220, P = { l:56, r:16, t:16, b:34 };
   const xs = rows.map(r => r.discount);
   const ys = rows.map(r => r.margin.net);
+  const los = rows.map(r => r.margin_ci_low ?? r.margin.net);
+  const his = rows.map(r => r.margin_ci_high ?? r.margin.net);
   const xMin = Math.min(...xs), xMax = Math.max(...xs);
-  const yMin = Math.min(0, ...ys), yMax = Math.max(0, ...ys);
+  const yMin = Math.min(0, ...los), yMax = Math.max(0, ...his);
   const x = v => P.l + ((v - xMin)/(xMax - xMin || 1)) * (W - P.l - P.r);
   const y = v => H - P.b - ((v - yMin)/((yMax - yMin) || 1)) * (H - P.t - P.b);
   const path = rows.map((r,i) => `${i?'L':'M'}${x(r.discount)},${y(r.margin.net)}`).join(' ');
@@ -403,9 +405,10 @@ const BreakEven = ({ grid, building }) => {
       <h3 style={{ fontSize:'1rem' }}>Where it stops paying for itself</h3>
       <p style={{ color:S.dim, fontSize:'0.76rem', marginTop:6, marginBottom:12,
                   lineHeight:1.6 }}>
-        Net margin against discount rate. A bigger offer recovers more carts and
-        costs more on every conversion it touches — including the ones that never
-        needed it. The crossing is the number a payments team actually needs.
+        Net margin against discount rate, with 95% intervals. A bigger offer
+        recovers more carts and costs more on every conversion it touches —
+        including the ones that never needed it. Grey points are those whose
+        sign the measurement does not resolve.
       </p>
       <div style={{ overflowX:'auto' }}>
         <svg viewBox={`0 0 ${W} ${H}`} style={{ width:'100%', minWidth:420 }}>
@@ -421,11 +424,22 @@ const BreakEven = ({ grid, building }) => {
                     style={{ ...mono, fontSize:11 }}>{(be*100).toFixed(0)}%</text>
             </g>
           )}
-          <path d={path} fill="none" stroke={S.green} strokeWidth="2.5"
+          {/* 95% interval on net margin. Margin depends on the rate difference
+            and on what the recovered baskets were worth, so it varies far more
+            than the rate; drawing only the line would imply precision the
+            measurement does not have. */}
+        <path d={
+          rows.map((r,i) => `${i?'L':'M'}${x(r.discount)},${y(r.margin_ci_high ?? r.margin.net)}`).join(' ')
+          + ' ' +
+          rows.slice().reverse().map(r => `L${x(r.discount)},${y(r.margin_ci_low ?? r.margin.net)}`).join(' ')
+          + ' Z'
+        } fill={S.green} opacity="0.13" stroke="none" />
+        <path d={path} fill="none" stroke={S.green} strokeWidth="2.5"
                 strokeLinejoin="round" />
           {rows.map(r => (
             <circle key={r.discount} cx={x(r.discount)} cy={y(r.margin.net)} r="3.5"
-                    fill={r.margin.net >= 0 ? S.green : S.red} />
+                    fill={r.margin_sign_resolved === false ? S.dim
+                          : r.margin.net >= 0 ? S.green : S.red} />
           ))}
           {rows.map(r => (
             <text key={`x${r.discount}`} x={x(r.discount)} y={H-P.b+16}
@@ -445,8 +459,12 @@ const BreakEven = ({ grid, building }) => {
           Beyond it the programme still recovers carts and still loses money.
         </p>
       ) : (
-        <p style={{ color:S.dim, fontSize:'0.8rem', marginTop:8 }}>
-          Net margin does not cross zero anywhere in the swept range.
+        <p style={{ color:S.dim, fontSize:'0.8rem', marginTop:8, lineHeight:1.6 }}>
+          <strong style={{ color:S.amber }}>Break-even is not established.</strong> Net
+          margin trends down as the discount rises, but at this sample size most
+          points have a 95% interval straddling zero (grey), so the crossing
+          cannot be located without more sessions per point. Saying where it
+          falls would be reading sampling error.
         </p>
       )}
     </div>

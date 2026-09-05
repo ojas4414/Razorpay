@@ -222,10 +222,19 @@ def main():
     print(f"    net vs like-for-like control  {net_change:>+12,.2f}")
     print(f"    offer precision               {baseline['offer_precision']:.1%} "
           f"-> {targeted['offer_precision']:.1%}")
-    verdict = ("uplift beats treating everyone"
-               if targeted["net"] > baseline_on_selected["net"]
-               else "uplift does NOT beat treating everyone")
-    print(f"    verdict                       {verdict}")
+    # Two different questions, and conflating them is easy. The like-for-like
+    # control isolates whether targeting helps *within* the population it picks.
+    # The business question is whether the programme earns more overall, and
+    # that is against treating everyone flagged -- restricting treatment throws
+    # away every profitable offer it declines.
+    print(f"    net vs treat-all              "
+          f"{targeted['net'] - baseline['net']:>+12,.2f}")
+    within = ("indistinguishable" if not targeted["test"].significant
+              or not baseline_on_selected["test"].significant
+              else "resolved")
+    print(f"    within selected population    {within}")
+    print(f"    OVERALL                       "
+          f"{'uplift earns more' if targeted['net'] > baseline['net'] else 'treating everyone earns more'}")
 
     base_sim, _ = run_sessions(args.sessions, seeds[0],
                                detector=Detector(thresholds),
@@ -257,7 +266,8 @@ def main():
         "baseline": flat(baseline),
         "baseline_on_selected": flat(baseline_on_selected),
         "uplift": flat(targeted),
-        "uplift_beats_baseline": targeted["net"] > baseline_on_selected["net"],
+        "uplift_beats_treat_all": targeted["net"] > baseline["net"],
+        "uplift_beats_like_for_like": targeted["net"] > baseline_on_selected["net"],
         "offers_avoided": saved,
         "net_margin_change": round(net_change, 2),
         "ground_truth": truth,

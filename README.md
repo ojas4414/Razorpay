@@ -321,60 +321,96 @@ that approached 100% would mean the model had been built to be rescued.
 
 ## What we measured
 
-`python -m sim.experiment --sessions 43000 --budget-aware`, thresholds calibrated
-on seed 7 and measured on seed 42. Both runs are seeded and reproduce exactly.
+Every figure below is pooled across multiple seeds. Nothing here rests on a
+single run, for a reason given at the end of this section.
 
-| | treatment | control | delta |
+### The effect
+
+`python -m sim.robustness --seeds 16 --sessions 5000`
+
+| | A/B (15% discount) | A/A (nothing applied) |
+|---|---|---|
+| Per-seed mean | +1.64% (sd 1.67%) | −0.36% (sd 2.01%) |
+| Seeds with positive delta | **14 of 16** | 6 of 16 |
+| **Pooled** | **+1.57%, z=+2.75, significant** | −0.33%, z=−0.60, null |
+| 95% CI (analytic) | +0.45% to +2.69% | −1.40% to +0.74% |
+| 95% CI (bootstrap) | +0.47% to +2.70% | −1.37% to +0.70% |
+
+**The A/A is the load-bearing number.** Same detector, same arm assignment, same
+scheduling, nothing applied — and it returns null across the same 16 seeds, with
+6 of 16 positive, which is the coin-flip you want from noise. Without that, the
+A/B would just be a number the machinery produced.
+
+The bootstrap interval agrees with the analytic one to within 0.02pp, so the
+normal approximation is not doing hidden work.
+
+### Dose-response
+
+`python -m sim.precompute_grid` — 8 discount rates, 5 seeds each.
+
+| discount | delta | z | net margin | 95% CI on margin |
+|---|---|---|---|---|
+| 5% | +2.82% | +2.60 | 4,790 | 1,444 to 9,246 |
+| 10% | +2.97% | +2.84 | 4,548 | 929 to 8,454 |
+| 15% | +2.38% | +2.20 | 3,154 | −603 to 7,175 |
+| 20% | +2.87% | +2.48 | 2,585 | −694 to 6,283 |
+| 25% | +1.98% | +1.92 | 1,485 | −2,033 to 5,129 |
+| 30% | +4.54% | +3.89 | 2,956 | −124 to 6,278 |
+| 40% | +6.75% | +5.38 | 2,470 | −382 to 5,430 |
+| 50% | +6.61% | +5.26 | 1,158 | −1,809 to 4,623 |
+
+A bigger offer recovers more (+2.82% at 5% rising to +6.75% at 40%, significant
+at every rate but one) and earns less (net trending from 4,790 down to 1,158).
+A monotone dose-response is what a real causal mechanism looks like, and it is
+harder to produce by accident than a single significant cell.
+
+**Break-even is not established.** Six of the eight margin intervals straddle
+zero, so no crossing can be located between two resolved points. An earlier
+version of this sweep measured one run per point and reported break-even at 34%;
+a properly pooled run at 40% — supposedly well past it — came back solidly
+margin-positive. That figure was sampling error and has been withdrawn.
+
+Latency degrades the effect as offers arrive too late to land: at a 15%
+discount the miss rate runs 10% → 18% → 33% → 48% as dispatch goes 0.5s → 6s.
+
+### Is it an artefact of the calibration?
+
+`python -m sim.sensitivity` — every constant perturbed ±20%, 5 seeds per cell.
+
+**The effect never turns significantly negative under any perturbation tested.**
+Nineteen of twenty cells stay positive; the largest swing is 1.88pp (hesitation
+weight). This is the measured answer to "you tuned it until it worked".
+
+### Do the detector's thresholds transfer?
+
+`python -m sim.transfer` — calibrate in one world, evaluate in four others.
+
+| world | lift (home thresholds) | lift (native) | loss |
 |---|---|---|---|
-| **A/B** — 15% discount, 0.5s dispatch | 6.07% | 3.25% | **+2.82%** |
-| **A/A** — identical machinery, nothing applied | 3.89% | 4.43% | −0.54% |
+| home | 1.286 | 1.286 | 0.000 |
+| price-sensitive | 1.326 | 1.319 | −0.007 |
+| patient shoppers | 1.300 | 1.298 | −0.002 |
+| expensive delivery | 1.114 | 1.115 | 0.000 |
+| impulsive | 1.332 | 1.355 | +0.023 |
 
-```
-A/B  +2.82%  (95% CI +1.29% to +4.35%, z=+3.61, n=1433/1476)  SIGNIFICANT, MDE 1.84%
-A/A  -0.54%  (95% CI -1.98% to +0.90%, z=-0.74, n=1467/1491)  not significant, MDE 2.12%
-```
+Thresholds calibrated in one world beat the base rate in every other, with a
+worst transfer loss of 0.023 lift. That is robustness across simulated worlds,
+**not** evidence about real shoppers: every world here shares the same
+generative model. Real validation needs a clickstream with view, cart and
+purchase labels, which this project does not have.
 
-**The A/A is the load-bearing number.** The same detector, the same arm
-assignment, the same scheduling — with nothing applied — reports no effect. That
-is the evidence the harness measures rather than manufactures, and without it
-the A/B would just be a number the machinery produced. It matters here
-specifically because treated sessions perturb a shared random stream, so
-"the arms are comparable" is a claim that has to be tested rather than assumed.
+### Why everything is pooled
 
-### Net margin
+Four separate claims in this project were drawn from single runs and all four had
+to be withdrawn: price-shock targeting (+6.17% became +0.89%), five sensitivity
+sign-flips (all noise), the uplift policy comparison, and the 34% break-even.
+`sim/robustness.py` measured the cause: one 5,000-session run carries a standard
+deviation near 1.7pp on the conversion delta, and net margin is noisier still.
 
-Gross recovered revenue is the wrong number, and reporting it alone would have
-called several earlier failures a success. Every treated session that converts
-is billed at a discount, including the shoppers who would have bought anyway.
-
-```
-incremental conversions      40.4
-gross recovered           8,936.47
-discount cost             2,808.56
-NET                       6,127.91    positive
-```
-
-At a 15% discount the programme clears its own cost. It does not always: on an
-earlier configuration the same arithmetic gave cost at 2.4x recovered revenue
-and a net of −1,374.62. Which side of that line a campaign lands on depends on
-the discount rate and on how much of the treated population could ever respond —
-which is why the detector's *recoverable precision* (roughly a third of
-treatments, flat across every operating point) is reported alongside its
-accuracy.
-
-### What this does and does not show
-
-The recovery rate is **2.9%** of carts that would otherwise have been abandoned.
-Published cart-recovery campaigns are usually quoted nearer 10%, so this model
-under-recovers by roughly a factor of three even after calibration. The effect is
-real and significant; the magnitude is not a prediction about Razorpay traffic.
-
-All order values are synthetic — product prices are an md5 of the ASIN — and the
-behavioural model is calibrated to published aggregate benchmarks rather than
-fitted to real transactions. **The method transfers; the magnitudes do not.**
-
-Every number above is recomputable from the append-only audit trail, and the
-experiment prints whether the log and the analysis agree. They do.
+Net margin now carries a bootstrap interval for that reason. Two policies with
+deltas of +6.70% and +6.69% and near-identical offer counts once produced nets
+1,961 apart — margin depends not only on how many extra sessions converted but on
+what their baskets happened to be worth.
 
 ## What did not work, and why
 

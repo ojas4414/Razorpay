@@ -153,6 +153,37 @@ class MarginResult:
         }
 
 
+def bootstrap_margin(treated, control, discount_rate: float, rounds: int = 1500,
+                     rng=None):
+    """Percentile interval on net margin, by resampling sessions.
+
+    Margin is noisier than the conversion rate and it was being reported without
+    any interval, which made it look more precise than it is. Two policies with
+    effectively identical deltas (+6.70% against +6.69%) and near-identical
+    offer counts produced nets 1,961 apart -- because margin depends not only on
+    how many extra sessions converted but on what their baskets happened to be
+    worth.
+
+    Bootstrapped rather than derived: net margin is a function of a rate
+    difference and a mean cart value together, and resampling captures their
+    joint variability without an analytic approximation that would need
+    defending.
+    """
+    import random as _random
+
+    rng = rng or _random.Random(20260905)
+    if not treated or not control:
+        return (0.0, 0.0)
+
+    nets = []
+    for _ in range(rounds):
+        t_sample = [rng.choice(treated) for _ in range(len(treated))]
+        c_sample = [rng.choice(control) for _ in range(len(control))]
+        nets.append(net_margin(t_sample, c_sample, discount_rate).net)
+    nets.sort()
+    return (nets[int(0.025 * rounds)], nets[int(0.975 * rounds)])
+
+
 def net_margin(treated, control, discount_rate: float) -> MarginResult:
     """Net value of treating this arm, against what control did without it.
 
