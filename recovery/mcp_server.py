@@ -25,6 +25,7 @@ Register with Claude Code:
   claude mcp add recovery -- python -m recovery.mcp_server
 """
 import json
+import json as _j
 import os
 import sys
 
@@ -89,6 +90,9 @@ def explain_decision(session_id: str, experiment_id=None, db_path=None) -> dict:
             },
             "offer": offer,
             # Timestamps the dashboard draws the session timeline from.
+            "diagnosis": row["diagnosis"],
+            "attempts": _j.loads(row["attempts"]) if row["attempts"] else [],
+            "escalated": bool(row["escalated"]),
             "dispatched_at_sim": row["dispatched_at_sim"],
             "applied_at_sim": row["applied_at_sim"],
             "ended_at_sim": row["ended_at_sim"],

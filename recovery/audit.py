@@ -59,6 +59,13 @@ CREATE TABLE IF NOT EXISTS recovery_audit (
     recoverable         INTEGER NOT NULL DEFAULT 0,
     ended_at_sim        REAL,
 
+    -- Playbook columns. A decision that escalated has several attempts, and
+    -- recording only the last would lose the sequence that a reviewer needs.
+    diagnosis           TEXT,
+    attempt_count       INTEGER NOT NULL DEFAULT 0,
+    escalated           INTEGER NOT NULL DEFAULT 0,
+    attempts            TEXT,
+
     cart_value          REAL    NOT NULL,
     discount_amount     REAL    NOT NULL DEFAULT 0,
     realized_value      REAL    NOT NULL DEFAULT 0,
@@ -72,6 +79,17 @@ CREATE INDEX IF NOT EXISTS idx_audit_arm        ON recovery_audit (experiment_id
 
 DETECTOR_VERSION = "stall+hesitation+price_shock/v2"
 
+# Columns added after the first databases were written. SQLite will not add them
+# to an existing table via CREATE TABLE IF NOT EXISTS, so they are applied
+# separately -- an audit trail that silently dropped the escalation sequence
+# would be worse than one that failed loudly.
+LATE_COLUMNS = (
+    ("diagnosis", "TEXT"),
+    ("attempt_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("escalated", "INTEGER NOT NULL DEFAULT 0"),
+    ("attempts", "TEXT"),
+)
+
 
 @dataclass
 class AuditLog:
@@ -83,7 +101,17 @@ class AuditLog:
         self._conn = sqlite3.connect(self.path)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self):
+        """Add columns an older database predates."""
+        existing = {row[1] for row in
+                    self._conn.execute("PRAGMA table_info(recovery_audit)")}
+        for name, spec in LATE_COLUMNS:
+            if name not in existing:
+                self._conn.execute(
+                    f"ALTER TABLE recovery_audit ADD COLUMN {name} {spec}")
 
     # -- writing --------------------------------------------------------------
     def record(self, session, experiment_id: str, seed=None,
@@ -199,6 +227,33 @@ def to_row(session, experiment_id: str, seed=None,
     intervention = session.intervention
     discount_amount = round(session.cart_value * session.discount, 2)
 
+    # A playbook session carries a sequence of attempts rather than a single
+    # intervention. The last landed rung stands in for the headline columns so
+    # existing queries keep working, and the whole ladder is kept alongside.
+    attempts = list(getattr(session, "attempts", []) or [])
+    landed = [a for a in attempts if a.landed]
+    if attempts and intervention is None:
+        latest = landed[-1] if landed else attempts[-1]
+        intervention_kind = latest.action.name
+        idempotency_key = latest.idempotency_key
+        magnitude = latest.action.magnitude
+        dispatched_at = latest.dispatched_at
+        applied_at = latest.applied_at
+        missed = all(a.missed for a in attempts)
+    else:
+        intervention_kind = intervention.kind if intervention else None
+        idempotency_key = intervention.idempotency_key if intervention else None
+        magnitude = intervention.magnitude if intervention else None
+        dispatched_at = intervention.dispatched_at if intervention else None
+        applied_at = intervention.applied_at if intervention else None
+        missed = bool(intervention and intervention.missed)
+
+    diagnosis = None
+    if flag is not None:
+        from recovery.playbook import diagnose
+
+        diagnosis = diagnose(flag.features or {})
+
     return {
         "experiment_id": experiment_id,
         "seed": seed,
@@ -211,12 +266,16 @@ def to_row(session, experiment_id: str, seed=None,
         "flag_stage": flag.stage,
         "features_at_flag": json.dumps(flag.features, sort_keys=True),
         "arm": session.arm or "unassigned",
-        "intervention_kind": intervention.kind if intervention else None,
-        "idempotency_key": intervention.idempotency_key if intervention else None,
-        "discount_rate": intervention.magnitude if intervention else None,
-        "dispatched_at_sim": intervention.dispatched_at if intervention else None,
-        "applied_at_sim": intervention.applied_at if intervention else None,
-        "intervention_missed": int(bool(intervention and intervention.missed)),
+        "intervention_kind": intervention_kind,
+        "idempotency_key": idempotency_key,
+        "discount_rate": magnitude,
+        "dispatched_at_sim": dispatched_at,
+        "applied_at_sim": applied_at,
+        "intervention_missed": int(missed),
+        "diagnosis": diagnosis,
+        "attempt_count": len(attempts),
+        "escalated": int(len(attempts) > 1),
+        "attempts": json.dumps([a.summary() for a in attempts]) if attempts else None,
         "outcome": session.outcome,
         "reason_code": session.reason,
         "quit_driver": session.quit_driver,

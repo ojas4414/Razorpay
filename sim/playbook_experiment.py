@@ -39,6 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.session import Outcome
 from recovery.analysis import ProportionTest
+from recovery.audit import AuditLog
 from recovery.assign import CONTROL, TREATMENT
 from recovery.detector import Detector, calibrate
 from recovery.intervention import InterventionPolicy
@@ -113,10 +114,21 @@ def run_fixed(thresholds, n_sessions, seed, discount):
     return row
 
 
-def run_playbook(thresholds, n_sessions, seed):
+def run_playbook(thresholds, n_sessions, seed, audit_path=None,
+                 experiment_id=None):
     book = PlaybookPolicy(safety=SafetyGate())
     sim, _ = run_sessions(n_sessions, seed, detector=Detector(thresholds),
                           playbook=book)
+    # The escalation ladder belongs in the audit trail like any other decision:
+    # a reviewer asking "what did we try on this shopper, in what order" has to
+    # be answerable from the record.
+    if audit_path and experiment_id:
+        audit = AuditLog(audit_path)
+        try:
+            audit.record_many([s for s in sim.sessions if s.flag],
+                              experiment_id, seed)
+        finally:
+            audit.close()
     row = _score(sim, book.cost_for, 0.0)
     stats = book.stats()
     row.update(
@@ -152,6 +164,8 @@ def main():
     parser.add_argument("--sessions", type=int, default=DEFAULT_SESSIONS)
     parser.add_argument("--discount", type=float, default=DISCOUNT)
     parser.add_argument("--out", default="results/playbook.json")
+    parser.add_argument("--audit", default="recovery_audit.db",
+                        help="audit trail to record the ladder into")
     args = parser.parse_args()
 
     print(f"Calibrating on seed {CALIBRATION_SEED} ({args.sessions:,} sessions)...")
@@ -165,7 +179,10 @@ def main():
     fixed_runs, book_runs = [], []
     for seed in EVAL_SEEDS:
         fixed_runs.append(run_fixed(thresholds, args.sessions, seed, args.discount))
-        book_runs.append(run_playbook(thresholds, args.sessions, seed))
+        book_runs.append(run_playbook(
+            thresholds, args.sessions, seed,
+            audit_path=args.audit,
+            experiment_id=f"playbook-n{args.sessions}-s{seed}"))
         print(f"  seed {seed} done", flush=True)
 
     fixed = _pooled(fixed_runs)

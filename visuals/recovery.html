@@ -45,7 +45,7 @@ const Header = ({ live }) => (
         Revenue Recovery
       </h1>
       <p style={{ color:S.dim, fontSize:'0.82rem', marginTop:4 }}>
-        Detect at-risk checkouts · intervene once · measure the difference · log every decision
+        Detect · diagnose · choose the action · escalate when it fails · measure · audit
       </p>
     </div>
     <div style={{ display:'flex', alignItems:'center', gap:8, ...mono, fontSize:'0.76rem' }}>
@@ -528,6 +528,146 @@ const BreakEven = ({ grid, building }) => {
   );
 };
 
+
+/* ─── choosing the action, and escalating ─── */
+const Playbook = ({ pb }) => {
+  if (!pb || pb.available === false) return null;
+  const fixed = pb.fixed, book = pb.playbook;
+  const better = pb.playbook_beats_fixed;
+  const row = (label, p, highlight) => (
+    <div style={{ flex:'1 1 240px', padding:14, borderRadius:10,
+                  background: highlight ? '#12211A' : '#1B1B1B',
+                  border:`1px solid ${highlight ? S.green+'55' : S.border}` }}>
+      <div style={{ fontSize:'0.82rem', marginBottom:10 }}>{label}</div>
+      <Stat label="effect"
+            value={`${p.delta>=0?'+':''}${pct(p.delta)}`}
+            sub={p.significant ? `significant · z=${p.z}` : `not significant · z=${p.z}`}
+            color={p.significant ? S.green : S.amber} />
+      <div style={{ marginTop:10 }}>
+        <Stat label="net margin" value={money(p.net)}
+              sub={`${p.issued.toLocaleString()} actions`}
+              color={p.net>0 ? S.green : S.red} />
+      </div>
+    </div>
+  );
+  return (
+    <div style={card()}>
+      <h3 style={{ fontSize:'1rem' }}>Does choosing the action beat one discount for everyone?</h3>
+      <p style={{ color:S.dim, fontSize:'0.76rem', marginTop:6, marginBottom:16,
+                  lineHeight:1.6 }}>
+        The playbook diagnoses the dominant pressure and picks the remedy — a
+        discount for price, a reminder for hesitation, a simpler checkout for
+        churn — escalating to a discount only if the free action failed.
+      </p>
+      <div style={{ display:'flex', gap:14, flexWrap:'wrap' }}>
+        {row('flat 15% discount to everyone flagged', fixed, !better)}
+        {row(`playbook, escalating (${(book.escalations||0).toLocaleString()} escalations)`,
+             book, better)}
+      </div>
+      <p style={{ fontSize:'0.84rem', marginTop:16, lineHeight:1.6 }}>
+        <strong style={{ color: better ? S.green : S.amber }}>
+          {better ? 'The playbook earns more.' : 'The flat discount earns more.'}
+        </strong>{' '}
+        {!better && (
+          <>It wins by {money(fixed.net - book.net)} in net margin, and is the only
+          one of the two whose effect is significant.</>
+        )}
+      </p>
+      {book.actions && (
+        <div style={{ marginTop:14 }}>
+          <div style={{ color:S.dim, fontSize:'0.72rem', textTransform:'uppercase',
+                        letterSpacing:'0.06em', marginBottom:8 }}>actions landed</div>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', ...mono,
+                        fontSize:'0.72rem' }}>
+            {Object.entries(book.actions).map(([k,v]) => (
+              <span key={k} style={{ padding:'4px 10px', borderRadius:20,
+                                     border:`1px solid ${S.border}`,
+                                     color: k.startsWith('discount') ? S.amber : S.green }}>
+                {k.replace(/_/g,' ')} {v.toLocaleString()}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ─── how good is the diagnosis? ─── */
+const Diagnosis = ({ pb }) => {
+  if (!pb || pb.available === false || !pb.diagnosis_matrix) return null;
+  const entries = Object.entries(pb.diagnosis_matrix).map(([k,v]) => {
+    const [guess, truth] = k.split('->');
+    return { guess, truth, n: v };
+  });
+  const guesses = [...new Set(entries.map(e => e.guess))].sort();
+  const truths = [...new Set(entries.map(e => e.truth))].sort();
+  const at = (g,t) => (entries.find(e => e.guess===g && e.truth===t) || {n:0}).n;
+  const rowTotal = g => truths.reduce((a,t) => a + at(g,t), 0);
+  const grand = entries.reduce((a,e) => a + e.n, 0);
+  const chance = truths.length ? 1/truths.length : 0;
+  const agree = pb.diagnosis_agreement || 0;
+
+  return (
+    <div style={card()}>
+      <h3 style={{ fontSize:'1rem' }}>How good is the diagnosis?</h3>
+      <p style={{ color:S.dim, fontSize:'0.76rem', marginTop:6, marginBottom:16,
+                  lineHeight:1.6 }}>
+        Scored against the true cause the simulation records and the pipeline
+        never sees. Rows are what it guessed, columns what actually happened.
+      </p>
+      <div style={{ overflowX:'auto' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse', ...mono,
+                        fontSize:'0.74rem' }}>
+          <thead>
+            <tr style={{ color:S.dim }}>
+              <th style={{ textAlign:'left', padding:'6px 10px' }}>guessed</th>
+              {truths.map(t => (
+                <th key={t} style={{ textAlign:'right', padding:'6px 10px' }}>{t}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {guesses.map(g => (
+              <tr key={g}>
+                <td style={{ padding:'6px 10px', borderTop:`1px solid ${S.border}` }}>{g}</td>
+                {truths.map(t => {
+                  const n = at(g,t), share = rowTotal(g) ? n/rowTotal(g) : 0;
+                  const hit = g === t;
+                  return (
+                    <td key={t} style={{ textAlign:'right', padding:'6px 10px',
+                                         borderTop:`1px solid ${S.border}`,
+                                         color: hit ? S.green : S.dim,
+                                         background: hit ? '#12211A' : 'transparent',
+                                         fontWeight: hit ? 600 : 400 }}>
+                      {n.toLocaleString()}
+                      <span style={{ color:S.dim, fontSize:'0.66rem' }}> {(share*100).toFixed(0)}%</span>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ display:'flex', gap:26, marginTop:16, flexWrap:'wrap' }}>
+        <Stat label="agreement" value={pct(agree,1)}
+              sub={`${grand.toLocaleString()} abandoned sessions`}
+              color={agree > chance*1.5 ? S.green : S.amber} big />
+        <Stat label="chance" value={pct(chance,1)}
+              sub={`${truths.length} possible causes`} color={S.dim} big />
+      </div>
+      <p style={{ fontSize:'0.8rem', marginTop:14, lineHeight:1.6 }}>
+        <strong style={{ color:S.amber }}>Barely better than a coin toss.</strong>{' '}
+        Routing to the right remedy cannot work when the routing is this noisy —
+        which is why the playbook loses. <strong>Detection and diagnosis are
+        different problems:</strong> finding at-risk sessions works, saying
+        <em> why</em> a session is at risk does not.
+      </p>
+    </div>
+  );
+};
+
 /* ─── audit trail ─── */
 const Audit = ({ decisions, onPick, picked }) => (
   <div style={card({ padding:0, overflow:'hidden' })}>
@@ -679,6 +819,25 @@ const Timeline = ({ detail }) => {
           </div>
         ))}
       </div>
+      {detail.attempts?.length > 1 && (
+        <div style={{ marginTop:12 }}>
+          <div style={{ color:S.dim, fontSize:'0.72rem', textTransform:'uppercase',
+                        letterSpacing:'0.06em', marginBottom:6 }}>
+            escalation ladder
+          </div>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', ...mono,
+                        fontSize:'0.72rem' }}>
+            {detail.attempts.map((a,i) => (
+              <span key={i} style={{ padding:'4px 10px', borderRadius:20,
+                border:`1px solid ${a.applied_at ? S.green+'55' : S.border}`,
+                color: a.applied_at ? S.green : S.dim }}>
+                {i+1}. {String(a.action).replace(/_/g,' ')}
+                {a.missed ? ' (missed)' : ''}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       {detail.arm === 'treatment' && detail.applied_at_sim == null && (
         <p style={{ color:S.amber, fontSize:'0.74rem', marginTop:10 }}>
           The offer was sent but never landed — the session ended first. Dispatch
@@ -796,10 +955,12 @@ const App = () => {
   const [grid, setGrid] = useState(null);
   const [building, setBuilding] = useState(false);
   const [rob, setRob] = useState(null);
+  const [pb, setPb] = useState(null);
 
   useEffect(() => {
     const j = (u) => fetch(u).then(r => r.json()).catch(() => null);
     j('/recovery/robustness').then(r => setRob(r && r.available === false ? null : r));
+    j('/recovery/playbook').then(r => setPb(r));
     j('/recovery/experiments').then(list => {
       if (!list?.experiments?.length) return;
       const abId = (list.experiments.find(e => e.experiment_id.startsWith('ab-'))
@@ -860,6 +1021,8 @@ const App = () => {
           <Margin ab={ab} />
         </div>
         <Drivers d={drivers} />
+        <Playbook pb={pb} />
+        <Diagnosis pb={pb} />
         <div style={{ display:'grid', gap:20, gridTemplateColumns:'repeat(auto-fit,minmax(340px,1fr))' }}>
           <Audit decisions={decisions} onPick={setPicked} picked={picked} />
           <Explain detail={detail} />

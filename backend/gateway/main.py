@@ -128,6 +128,7 @@ GRID_PATH = os.environ.get("FF_GRID", "visuals/counterfactual_grid.json")
 # committed sweep so a cold start finishes in minutes rather than an hour.
 GRID_SESSIONS = int(os.environ.get("FF_GRID_SESSIONS", "3000"))
 ROBUSTNESS_PATH = os.environ.get("FF_ROBUSTNESS", "results/robustness.json")
+PLAYBOOK_PATH = os.environ.get("FF_PLAYBOOK", "results/playbook.json")
 
 # Counterfactual runs happen in a subprocess: the simulation reseeds the global
 # RNG, and doing that in-process would reset the stream the live simulation
@@ -209,6 +210,17 @@ async def recovery_robustness():
     except FileNotFoundError:
         return {"available": False,
                 "message": "no pooled result yet"}
+
+
+@app.get("/recovery/playbook")
+async def recovery_playbook():
+    """Action selection vs one discount for everyone, and how good the
+    diagnosis actually is."""
+    try:
+        with open(PLAYBOOK_PATH, encoding="utf-8") as handle:
+            return json.load(handle)
+    except FileNotFoundError:
+        return {"available": False, "message": "no playbook comparison yet"}
 
 
 @app.get("/recovery/grid")
