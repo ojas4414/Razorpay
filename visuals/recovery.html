@@ -14,6 +14,7 @@
     @keyframes pulse  { 0%,100%{opacity:1} 50%{opacity:0.3} }
     .row-in { animation: fadeIn .3s ease; }
     .dot { animation: pulse 1.3s ease-in-out infinite; }
+    @keyframes sweep { 0%{margin-left:-35%} 100%{margin-left:100%} }
     ::-webkit-scrollbar { width:8px; height:8px; }
     ::-webkit-scrollbar-thumb { background:#2A2A2A; border-radius:4px; }
   </style>
@@ -229,7 +230,7 @@ const nearest = (rows, key, value) =>
     (best == null || Math.abs(r[key]-value) < Math.abs(best[key]-value)) ? r : best, null);
 
 /* ─── the lab: change the offer, see what it does ─── */
-const Lab = ({ grid }) => {
+const Lab = ({ grid, building }) => {
   const [discount, setDiscount] = useState(0.15);
   const [latency, setLatency]   = useState(0.5);
   const [job, setJob]           = useState(null);
@@ -287,7 +288,7 @@ const Lab = ({ grid }) => {
         <span style={{ ...mono, fontSize:'0.7rem', color:S.dim }}>
           {live ? 'measured just now' : grid?.sessions_per_cell
             ? `precomputed · ${grid.sessions_per_cell.toLocaleString()} sessions per point`
-            : 'precomputed sweep unavailable'}
+            : building ? 'building the response curves…' : 'response curves pending'}
         </span>
       </div>
 
@@ -316,10 +317,26 @@ const Lab = ({ grid }) => {
           <CIBar low={shown.ci_low} high={shown.ci_high} delta={shown.delta} />
         </div>
       ) : (
-        <p style={{ color:S.dim, fontSize:'0.8rem', marginTop:18 }}>
-          Run <code style={{ ...mono, color:S.blue }}>python -m sim.precompute_grid</code> to
-          populate the sweep.
-        </p>
+        <div style={{ marginTop:18 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <span className="dot" style={{ width:8, height:8, borderRadius:'50%',
+                                           background:S.blue, display:'inline-block' }} />
+            <span style={{ fontSize:'0.82rem' }}>
+              {building
+                ? 'Measuring the response curves — a dozen experiments, back to back.'
+                : 'Preparing the response curves…'}
+            </span>
+          </div>
+          <div style={{ background:S.border, borderRadius:4, height:6, marginTop:12,
+                        overflow:'hidden' }}>
+            <div style={{ height:'100%', width:'35%', background:S.blue, opacity:0.5,
+                          borderRadius:4, animation:'sweep 1.6s ease-in-out infinite' }} />
+          </div>
+          <p style={{ color:S.dim, fontSize:'0.74rem', marginTop:10 }}>
+            The sliders fill in on their own when it lands. You can still measure a
+            single offer below while it runs.
+          </p>
+        </div>
       )}
 
       <div style={{ display:'flex', gap:12, alignItems:'center', marginTop:18,
@@ -358,9 +375,18 @@ const Lab = ({ grid }) => {
 };
 
 /* ─── where the programme stops paying for itself ─── */
-const BreakEven = ({ grid }) => {
+const BreakEven = ({ grid, building }) => {
   const rows = grid?.by_discount;
-  if (!rows?.length) return null;
+  if (!rows?.length) return (
+    <div style={card()}>
+      <h3 style={{ fontSize:'1rem' }}>Where it stops paying for itself</h3>
+      <p style={{ color:S.dim, fontSize:'0.78rem', marginTop:8, lineHeight:1.6 }}>
+        {building
+          ? 'Measuring net margin across discount rates. The crossing point appears here.'
+          : 'Preparing the margin curve.'}
+      </p>
+    </div>
+  );
 
   const W = 520, H = 220, P = { l:56, r:16, t:16, b:34 };
   const xs = rows.map(r => r.discount);
@@ -693,10 +719,10 @@ const App = () => {
   const [stats, setStats] = useState({});
   const [live, setLive] = useState(false);
   const [grid, setGrid] = useState(null);
+  const [building, setBuilding] = useState(false);
 
   useEffect(() => {
     const j = (u) => fetch(u).then(r => r.json()).catch(() => null);
-    j('/recovery/grid').then(g => setGrid(g && g.available === false ? null : g));
     j('/recovery/experiments').then(list => {
       if (!list?.experiments?.length) return;
       const abId = (list.experiments.find(e => e.experiment_id.startsWith('ab-'))
@@ -708,6 +734,22 @@ const App = () => {
         .then(d => setDecisions(d?.decisions || []));
       if (aaId) j(`/recovery/experiment?experiment_id=${aaId}`).then(setAa);
     });
+  }, []);
+
+  /* The server builds the sweep itself if it is missing; poll until it lands. */
+  useEffect(() => {
+    let timer = null;
+    const check = () => fetch('/recovery/grid').then(r => r.json()).then(g => {
+      if (g && g.available === false) {
+        setBuilding(g.status === 'building');
+        timer = setTimeout(check, 8000);
+      } else {
+        setGrid(g);
+        setBuilding(false);
+      }
+    }).catch(() => { timer = setTimeout(check, 15000); });
+    check();
+    return () => timer && clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -735,9 +777,9 @@ const App = () => {
       <Header live={live} />
       <div style={{ display:'grid', gap:20 }}>
         <Result ab={ab} aa={aa} />
-        <Lab grid={grid} />
+        <Lab grid={grid} building={building} />
         <div style={{ display:'grid', gap:20, gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))' }}>
-          <BreakEven grid={grid} />
+          <BreakEven grid={grid} building={building} />
           <Margin ab={ab} />
         </div>
         <Drivers d={drivers} />

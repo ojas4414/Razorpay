@@ -182,3 +182,65 @@ def _ok_result():
 
 def _fail_result(stderr):
     return _Completed(1, stderr)
+
+
+class TestGridSelfBuild:
+    """The dashboard must never tell a person to go and run a command."""
+
+    def test_existing_sweep_is_reported_available(self, tmp_path):
+        path = tmp_path / "grid.json"
+        path.write_text("{}", encoding="utf-8")
+        assert JobRunner().ensure_grid(str(path))["available"] is True
+
+    def test_missing_sweep_starts_a_build(self, tmp_path, monkeypatch):
+        started = []
+
+        def fake_run(command, **kwargs):
+            started.append(command)
+            time.sleep(0.3)
+            return _ok_result()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        runner = JobRunner()
+        first = runner.ensure_grid(str(tmp_path / "grid.json"))
+        assert first["available"] is False
+        assert first["status"] == "building"
+        time.sleep(0.05)
+        assert any("sim.precompute_grid" in c for c in started[0])
+
+    def test_a_second_request_does_not_start_a_second_build(self, tmp_path, monkeypatch):
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(1)
+            time.sleep(0.4)
+            return _ok_result()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        runner = JobRunner()
+        path = str(tmp_path / "grid.json")
+        runner.ensure_grid(path)
+        time.sleep(0.05)
+        second = runner.ensure_grid(path)
+        assert second["status"] == "building"
+        time.sleep(0.6)
+        assert len(calls) == 1
+
+    def test_a_failed_build_is_reported(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(subprocess, "run",
+                            lambda *a, **k: _fail_result("sweep exploded"))
+        runner = JobRunner()
+        path = str(tmp_path / "grid.json")
+        runner.ensure_grid(path)
+        time.sleep(0.3)
+        status = runner.ensure_grid(path)
+        assert status["status"] == "error"
+        assert "exploded" in status["error"]
+
+    def test_build_uses_the_requested_session_count(self, tmp_path, monkeypatch):
+        captured = []
+        monkeypatch.setattr(subprocess, "run",
+                            lambda c, **k: (captured.append(c), _ok_result())[1])
+        JobRunner().ensure_grid(str(tmp_path / "g.json"), sessions=2500)
+        time.sleep(0.2)
+        assert "2500" in captured[0]

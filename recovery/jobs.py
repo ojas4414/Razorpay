@@ -34,6 +34,10 @@ DEFAULT_SESSIONS = 3000
 # dashboard does not lock up permanently on one bad job.
 JOB_TIMEOUT_SECONDS = 900
 
+# The sweep is a dozen experiments back to back, so it gets a longer leash than
+# a single counterfactual.
+GRID_TIMEOUT_SECONDS = 5400
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -68,6 +72,7 @@ class JobRunner:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         self._active: str | None = None
+        self._grid_job: Job | None = None
         self._python = python_executable or sys.executable
         self._cwd = cwd or REPO_ROOT
 
@@ -110,6 +115,52 @@ class JobRunner:
 
         threading.Thread(target=self._run, args=(job,), daemon=True).start()
         return {"accepted": True, "job_id": job.job_id, "params": job.params}
+
+    # -- the response-curve sweep ---------------------------------------------
+    def ensure_grid(self, path: str, sessions: int = 4000) -> dict:
+        """Build the precomputed sweep if it is missing, in the background.
+
+        The dashboard should never ask a person to go and run something. If the
+        file is not there the server builds it, reports that it is building, and
+        serves it when it lands. Same subprocess isolation as a counterfactual,
+        for the same RNG reason.
+        """
+        if os.path.exists(path):
+            return {"available": True}
+
+        with self._lock:
+            existing = self._grid_job
+            if existing is not None and existing.status == "running":
+                return {"available": False, "status": "building",
+                        "elapsed_seconds": existing.elapsed}
+            if existing is not None and existing.status == "error":
+                return {"available": False, "status": "error",
+                        "error": existing.error}
+            job = Job(job_id="grid", params={"sessions": sessions, "path": path})
+            self._grid_job = job
+
+        threading.Thread(target=self._build_grid, args=(job, path), daemon=True).start()
+        return {"available": False, "status": "building", "elapsed_seconds": 0.0}
+
+    def _build_grid(self, job, path):
+        try:
+            completed = subprocess.run(
+                [self._python, "-m", "sim.precompute_grid",
+                 "--sessions", str(job.params["sessions"]), "--out", path],
+                cwd=self._cwd, capture_output=True, text=True,
+                timeout=GRID_TIMEOUT_SECONDS,
+            )
+            if completed.returncode != 0:
+                job.status = "error"
+                job.error = (completed.stderr or "sweep failed").strip()[-600:]
+            else:
+                job.status = "done"
+        except subprocess.TimeoutExpired:
+            job.status = "error"
+            job.error = f"sweep timed out after {GRID_TIMEOUT_SECONDS}s"
+        except Exception as exc:                      # noqa: BLE001
+            job.status = "error"
+            job.error = str(exc)
 
     def _command(self, job, out_path):
         command = [

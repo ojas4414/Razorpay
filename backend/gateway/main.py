@@ -124,6 +124,9 @@ async def post_session_start(request: Request):
 # agent asking in words cannot end up reporting different numbers.
 AUDIT_DB = os.environ.get("FF_AUDIT_DB", "recovery_audit.db")
 GRID_PATH = os.environ.get("FF_GRID", "visuals/counterfactual_grid.json")
+# Sessions per point when the server builds the sweep itself. Smaller than the
+# committed sweep so a cold start finishes in minutes rather than an hour.
+GRID_SESSIONS = int(os.environ.get("FF_GRID_SESSIONS", "3000"))
 
 # Counterfactual runs happen in a subprocess: the simulation reseeds the global
 # RNG, and doing that in-process would reset the stream the live simulation
@@ -202,8 +205,9 @@ async def recovery_grid():
         with open(GRID_PATH, encoding="utf-8") as handle:
             return json.load(handle)
     except FileNotFoundError:
-        return {"available": False,
-                "message": "run python -m sim.precompute_grid to build it"}
+        # Nobody should be told to go and run a command. Build it here and
+        # report progress; the page polls until it lands.
+        return jobs.ensure_grid(GRID_PATH, sessions=GRID_SESSIONS)
 
 
 @app.post("/recovery/counterfactual")
