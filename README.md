@@ -291,7 +291,8 @@ No tool can affect production: the read tools sit on an append-only table, and
 ### Let a local LLM diagnose a session
 
 ```bash
-python -m recovery.llm_diagnosis s0000042 --db recovery_audit.db --model llama3.2:3b
+python -c "from recovery.mcp_server import run_counterfactual; run_counterfactual(sessions=2000, db_path='demo_audit.db')"
+python -m recovery.llm_diagnosis s0000042 --db demo_audit.db --model llama3.2:3b
 ```
 
 [recovery/llm_diagnosis.py](recovery/llm_diagnosis.py) gives an Ollama model only the read-only
