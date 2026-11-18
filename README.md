@@ -7,11 +7,22 @@
 Razorpay AI Builder Buildathon · Track 03, Revenue Recovery
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-312%20passing-34D399)](tests/)
+[![Tests](https://img.shields.io/badge/tests-325%20passing-34D399)](tests/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-gateway%20%2B%20services-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![MCP](https://img.shields.io/badge/MCP-4%20tools-A78BFA)](recovery/mcp_server.py)
 
 </div>
+
+Flags checkout sessions that look about to be abandoned, sends each one bounded action (a reminder, a simplified checkout or a discount, chosen from the evidence), and records every decision in an append-only audit log.
+Everything runs on a seeded multi-agent shopping simulation, so whether an action helped is measured against a randomised control arm and an A/A null check rather than assumed.
+
+## Run it
+
+```bash
+pip install -r requirements.txt
+python -m uvicorn backend.gateway.main:app --port 8000    # dashboard at http://localhost:8000
+python -m sim.robustness --seeds 16 --sessions 5000       # reproduces the result below (about 15 min)
+```
 
 ---
 
@@ -28,6 +39,9 @@ A/A  (nothing)         3.96%      4.28%    -0.33%   z=-0.60   null
 
 **+1.57%** &nbsp;·&nbsp; 95% CI **+0.45% to +2.69%** &nbsp;·&nbsp; bootstrap CI **+0.47% to +2.70%**
 &nbsp;·&nbsp; pooled over **16 seeds**, 14 of them positive &nbsp;·&nbsp; n = 2,599 / 2,698
+
+Re-run on 2026-11-19 with `python -m sim.robustness --seeds 16 --sessions 5000`: every figure above
+reproduced, and the regenerated [results/robustness.json](results/robustness.json) was identical to the committed file.
 
 The **A/A check** is the number that makes the first one mean anything. Same
 detector, same randomisation, same scheduling, nothing applied — and it returns
@@ -273,6 +287,22 @@ claude mcp add recovery -- python -m recovery.mcp_server
 is the check that the audit trail is a complete record rather than decoration.
 No tool can affect production: the read tools sit on an append-only table, and
 `run_counterfactual` starts a simulation.
+
+### Let a local LLM diagnose a session
+
+```bash
+python -m recovery.llm_diagnosis s0000042 --db recovery_audit.db --model llama3.2:3b
+```
+
+[recovery/llm_diagnosis.py](recovery/llm_diagnosis.py) gives an Ollama model only the read-only
+`explain_decision` tool, listed from this MCP server over stdio. Its answer must validate against a Pydantic
+model (`cause_of_abandonment`, `recommended_intervention`, `confidence`, `rationale`) using the repo's own
+cause and action names. It gets one retry with the validation error, then falls back to "unknown / none / 0.0",
+so invalid output never turns into an action. One real run, with raw input and output, is in
+[examples/tool_call_demo.md](examples/tool_call_demo.md): `llama3.2:3b` returned valid JSON on the first
+attempt. That run shows the plumbing works, not diagnostic skill: the tool output already contains the
+answer. The retry and fallback paths are covered by [tests/test_llm_diagnosis.py](tests/test_llm_diagnosis.py)
+with a mocked model.
 
 ---
 
